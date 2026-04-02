@@ -253,11 +253,11 @@ with sl1:
     first_to = st.slider("FIRST TO (frames)", 1, 18, 10, step=1)
 with sl2:
     elob_w = st.slider("ELOb WEIGHT", 0.0, 1.0, 0.8, step=0.05,
-                       format="%.0f%%",
-                       help="Weight given to ELO-beta vs ELO-frames")
+                   format="%.2f",
+                   help="Weight given to ELO-beta vs ELO-frames")
 with sl3:
     edge = st.slider("EDGE TARGET", 0.0, 0.20, 0.05, step=0.005,
-                     format="%.1f%%")
+                 format="%.1f%%")
 
 st.markdown("<br>", unsafe_allow_html=True)
 run = st.button("RUN PREDICTION")
