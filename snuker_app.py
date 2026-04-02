@@ -348,16 +348,3 @@ if run:
         "#ef9a9a", "prob-bar-fill-b", "card-b", edge
     )
 ```
-
-**Your repo needs two files:**
-```
-your-repo/
-├── app.py          ← the code above
-├── ratings.json    ← exported from your notebook
-└── requirements.txt
-```
-
-**`requirements.txt`:**
-```
-streamlit
-scipy
