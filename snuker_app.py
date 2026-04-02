@@ -256,8 +256,8 @@ with sl2:
                    format="%.2f",
                    help="Weight given to ELO-beta vs ELO-frames")
 with sl3:
-    edge = st.slider("EDGE TARGET", 0.0, 0.20, 0.05, step=0.005,
-                 format="%.1f%%")
+    edge_pct = st.slider("EDGE TARGET", 0.0, 20.0, 5.0, step=0.5, format="%.1f%%")
+    edge = edge_pct / 100
 
 st.markdown("<br>", unsafe_allow_html=True)
 run = st.button("RUN PREDICTION")
