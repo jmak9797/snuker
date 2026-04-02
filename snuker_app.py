@@ -347,4 +347,3 @@ if run:
         r["elob_mb"], r["elof_mb"],
         "#ef9a9a", "prob-bar-fill-b", "card-b", edge
     )
-```
