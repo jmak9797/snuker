@@ -67,19 +67,36 @@ st.markdown("""
 
 if "bet_slip" not in st.session_state:
     st.session_state["bet_slip"] = pd.DataFrame(
-        columns=["Player 1", "Player 2", "Market", "Selection", "Line", "Target", "Market Price"]
+        columns=["Player 1", "Player 2", "Market", "Selection", "Line",
+                 "Target", "Market Price", "Kelly Stake %"]
     )
+if "mp_version" not in st.session_state:
+    st.session_state["mp_version"] = 0   # bump this to wipe all market price inputs
 
 
 # ════════════════════════════════════════════════════════════════════
 # HELPERS
 # ════════════════════════════════════════════════════════════════════
 
+def kelly_stake(market_odds: float, prob_win: float) -> float:
+    """Kelly criterion as a fraction of bankroll (capped at 0)."""
+    b = market_odds - 1
+    q = 1 - prob_win
+    if b <= 0:
+        return 0.0
+    k = (b * prob_win - q) / b
+    return max(k, 0.0)
+
+
 def add_bet(player1, player2, market, selection, line, target, market_price):
+    prob_win = 1 / target if target > 0 else 0.0
+    k = kelly_stake(market_price, prob_win)
     new_row = pd.DataFrame([{
         "Player 1": player1, "Player 2": player2, "Market": market,
         "Selection": selection, "Line": line,
-        "Target": round(float(target), 3), "Market Price": round(float(market_price), 3),
+        "Target": round(float(target), 3),
+        "Market Price": round(float(market_price), 3),
+        "Kelly Stake %": f"{k*100:.2f}%",
     }])
     st.session_state["bet_slip"] = pd.concat(
         [st.session_state["bet_slip"], new_row], ignore_index=True
@@ -87,13 +104,15 @@ def add_bet(player1, player2, market, selection, line, target, market_price):
 
 
 def market_input_row(key_prefix, target_val, pa, pb, market, selection, line):
-    """Renders a market price text input + Add Bet button. Returns (mp_float|None, is_value)."""
+    """Renders market price text input + Add Bet button. Returns (mp|None, is_value)."""
+    versioned_key = f"mp_{key_prefix}_v{st.session_state['mp_version']}"
     c1, c2 = st.columns([4, 1])
     with c1:
-        raw = st.text_input("mkt", value="", key=f"mp_{key_prefix}",
+        raw = st.text_input("mkt", value="", key=versioned_key,
                             label_visibility="collapsed", placeholder="Market price")
     with c2:
-        btn = st.button("＋", key=f"ab_{key_prefix}", help="Add to bet slip")
+        btn = st.button("＋", key=f"ab_{key_prefix}_v{st.session_state['mp_version']}",
+                        help="Add to bet slip")
 
     mp_val, is_value = None, False
     if raw.strip():
@@ -118,6 +137,27 @@ def value_badge(mp_val, target_val, is_value):
     return (f"<div style='font-size:12px;font-weight:700;color:{c};"
             f"font-family:monospace;margin:2px 0 6px 0;'>"
             f"{mp_val:.3f} &nbsp;{icon}</div>")
+
+
+def collapse_dist(dist: dict, threshold: float = 0.02) -> list:
+    """
+    Returns a list of (label, prob) collapsing any tail entries below threshold
+    into a single 'N+' bucket.
+    """
+    items = sorted(dist.items())
+    result = []
+    tail_prob = 0.0
+    tail_start = None
+    for k, v in items:
+        if v < threshold:
+            if tail_start is None:
+                tail_start = k
+            tail_prob += v
+        else:
+            result.append((str(k), v))
+    if tail_prob > 0 and tail_start is not None:
+        result.append((f"{tail_start}+", tail_prob))
+    return result
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -310,6 +350,8 @@ if run:
     st.session_state["players"] = (player_a, player_b)
     st.session_state["first_to"] = first_to
     st.session_state["edge"] = edge
+    # Bump version to wipe all market price inputs across all tabs
+    st.session_state["mp_version"] = st.session_state.get("mp_version", 0) + 1
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -327,10 +369,12 @@ tab_match, tab_handicap, tab_centuries, tab_betslip = st.tabs([
 
 def render_match_card(col, name, prob, true_o, edge_p,
                       elob_r, elof_r, elob_pf, elob_pm, elof_pf, elof_pm,
-                      m_elob, m_elof, color, bar_class, card_class, h_edge, pa, pb, pkey):
+                      m_elob, h_edge, color, bar_class, card_class, pa, pb, pkey):
     with col:
         bar_w = int(prob * 100)
         name_class = "player-name-a" if color == "#4fc3f7" else "player-name-b"
+        matches_color = "#ef5350" if m_elob < 50 else "#ffffff"
+        matches_weight = "700" if m_elob < 50 else "400"
         st.markdown(f"""
         <div class="{card_class}">
             <div class="{name_class}">{name}</div>
@@ -348,7 +392,7 @@ def render_match_card(col, name, prob, true_o, edge_p,
             <div class="breakdown-row"><span>ELO-beta (rating: {elob_r:+.1f})</span><span class="breakdown-val">frame / match = {elob_pf*100:.1f}% / {elob_pm*100:.1f}%</span></div>
             <div class="breakdown-row"><span>ELO-frames (rating: {elof_r:+.1f})</span><span class="breakdown-val">frame / match = {elof_pf*100:.1f}% / {elof_pm*100:.1f}%</span></div>
             <hr class="divider">
-            <div class="breakdown-row"><span>Matches (β / f)</span><span class="breakdown-val">{m_elob} / {m_elof}</span></div>
+            <div class="breakdown-row"><span>Matches</span><span style="color:{matches_color};font-weight:{matches_weight};font-family:'IBM Plex Mono',monospace;">{m_elob}</span></div>
         </div>
         """, unsafe_allow_html=True)
         mp_val, is_val = market_input_row(f"mo_{pkey}", edge_p, pa, pb, "Match Odds", name, 0)
@@ -373,14 +417,12 @@ with tab_match:
         ca, cb = st.columns(2)
         render_match_card(ca, pa, r["prob_a"], r["true_a"], r["edge_a"],
                           r["elob_ra"], r["elof_ra"], r["elob_pfa"], r["elob_pa"],
-                          r["elof_pfa"], r["elof_pa"], r["elob_ma"], r["elof_ma"],
-                          "#4fc3f7", "prob-bar-fill-a", "card-a",
-                          st.session_state["edge"], pa, pb, "a")
+                          r["elof_pfa"], r["elof_pa"], r["elob_ma"],
+                          st.session_state["edge"], "#4fc3f7", "prob-bar-fill-a", "card-a", pa, pb, "a")
         render_match_card(cb, pb, r["prob_b"], r["true_b"], r["edge_b"],
                           r["elob_rb"], r["elof_rb"], r["elob_pfb"], r["elob_pb"],
-                          r["elof_pfb"], r["elof_pb"], r["elob_mb"], r["elof_mb"],
-                          "#ef9a9a", "prob-bar-fill-b", "card-b",
-                          st.session_state["edge"], pa, pb, "b")
+                          r["elof_pfb"], r["elof_pb"], r["elob_mb"],
+                          st.session_state["edge"], "#ef9a9a", "prob-bar-fill-b", "card-b", pa, pb, "b")
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -424,7 +466,8 @@ with tab_handicap:
         st.markdown("<br>", unsafe_allow_html=True)
 
         sl = scoreline_probs(r["pfa_blended"], ft)
-        candidate_lines = [-3.5, -2.5, -1.5, 1.5, 2.5, 3.5]
+        # Extended to ±5.5
+        candidate_lines = [-5.5, -4.5, -3.5, -2.5, -1.5, 1.5, 2.5, 3.5, 4.5, 5.5]
 
         def line_possible(line, ft):
             return ft >= math.ceil(abs(line))
@@ -502,13 +545,14 @@ def _ou_html(color, ou, line, cen_edge):
 
 
 def _dist_html(dist, color, cen_edge):
+    collapsed = collapse_dist(dist, threshold=0.02)
     rows = ""
-    for k, v in dist.items():
+    for label, v in collapsed:
         bw = min(int(v * 200), 100)
         to = 1/v if v > 0 else float("inf")
         tgt = to * (1 + cen_edge)
         rows += (
-            f"<tr><td>{k}</td>"
+            f"<tr><td>{label}</td>"
             f"<td><div style='background:#12121e;border-radius:3px;height:8px;width:100%;'>"
             f"<div style='background:{color};border-radius:3px;height:8px;width:{bw}%;'></div></div></td>"
             f"<td>{v*100:.2f}%</td>"
@@ -521,6 +565,35 @@ def _dist_html(dist, color, cen_edge):
         "<th>CENTURIES</th><th style='width:35%;'>DIST</th><th>PROB</th><th>TRUE</th><th>TARGET</th>"
         f"</tr></thead><tbody>{rows}</tbody></table>"
     )
+
+
+def _cen_col(col, name, name_class, card_class, color, ou, line, dist, cen_edge, cr, pa, pb, pkey):
+    with col:
+        cr_html = (
+            f"<div class='breakdown-row' style='margin-bottom:8px;'>"
+            f"<span>century rate (given frame win)</span>"
+            f"<span class='breakdown-val'>{cr*100:.1f}%</span></div>"
+        ) if cr > 0 else ""
+        st.markdown(
+            f"<div class='{card_class}'><div class='{name_class}'>{name}</div>"
+            + cr_html
+            + f"<hr class='divider'>"
+            + _ou_html(color, ou, line, cen_edge)
+            + "<hr class='divider'><div class='section-cap'>FULL DISTRIBUTION</div>"
+            + _dist_html(dist, color, cen_edge)
+            + "</div>",
+            unsafe_allow_html=True
+        )
+        ot = (1/ou["over"]) * (1+cen_edge) if ou["over"] > 0 else float("inf")
+        ut = (1/ou["under"]) * (1+cen_edge) if ou["under"] > 0 else float("inf")
+        st.markdown(f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-top:8px;'>OVER {line}</div>", unsafe_allow_html=True)
+        mv, iv = market_input_row(f"{pkey}_o", ot, pa, pb, "Centuries", f"{name} Over {line}", line)
+        if mv is not None:
+            st.markdown(value_badge(mv, ot, iv), unsafe_allow_html=True)
+        st.markdown(f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-top:4px;'>UNDER {line}</div>", unsafe_allow_html=True)
+        mv, iv = market_input_row(f"{pkey}_u", ut, pa, pb, "Centuries", f"{name} Under {line}", line)
+        if mv is not None:
+            st.markdown(value_badge(mv, ut, iv), unsafe_allow_html=True)
 
 
 with tab_centuries:
@@ -548,39 +621,12 @@ with tab_centuries:
                 "MATCH LINE", options=mlo, value=mlo[min(2, len(mlo)-1)], key="line_m")
 
         st.markdown("<br>", unsafe_allow_html=True)
-
         cen_result = predict_match_centuries(pa, pb, ft, player_rates, r["pfa_blended"])
         ou_a = over_under(cen_result, pa, line_a)
         ou_b = over_under(cen_result, pb, line_b)
         ou_m = over_under(cen_result, "match", line_m)
 
         col_ca, col_cb, col_cm = st.columns(3)
-
-        def _cen_col(col, name, name_class, card_class, color, ou, line, dist, cen_edge, cr, pa, pb, pkey):
-            with col:
-                st.markdown(
-                    f"<div class='{card_class}'><div class='{name_class}'>{name}</div>"
-                    f"<div class='breakdown-row' style='margin-bottom:8px;'>"
-                    f"<span>century rate (given frame win)</span>"
-                    f"<span class='breakdown-val'>{cr*100:.1f}%</span></div>"
-                    f"<hr class='divider'>"
-                    + _ou_html(color, ou, line, cen_edge)
-                    + "<hr class='divider'><div class='section-cap'>FULL DISTRIBUTION</div>"
-                    + _dist_html(dist, color, cen_edge)
-                    + "</div>",
-                    unsafe_allow_html=True
-                )
-                ot = (1/ou["over"]) * (1+cen_edge) if ou["over"] > 0 else float("inf")
-                ut = (1/ou["under"]) * (1+cen_edge) if ou["under"] > 0 else float("inf")
-                st.markdown(f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-top:8px;'>OVER {line}</div>", unsafe_allow_html=True)
-                mv, iv = market_input_row(f"{pkey}_o", ot, pa, pb, "Centuries", f"{name} Over {line}", line)
-                if mv is not None:
-                    st.markdown(value_badge(mv, ot, iv), unsafe_allow_html=True)
-                st.markdown(f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-top:4px;'>UNDER {line}</div>", unsafe_allow_html=True)
-                mv, iv = market_input_row(f"{pkey}_u", ut, pa, pb, "Centuries", f"{name} Under {line}", line)
-                if mv is not None:
-                    st.markdown(value_badge(mv, ut, iv), unsafe_allow_html=True)
-
         cen_rate_a = player_rates.get(pa, 0.0) or 0.0
         cen_rate_b = player_rates.get(pb, 0.0) or 0.0
 
@@ -605,39 +651,66 @@ with tab_betslip:
             "No bets added yet. Use the ＋ buttons in each tab.</div>",
             unsafe_allow_html=True)
     else:
+        # Checkbox column for row deletion
+        st.markdown("<div style='font-size:10px;color:#444455;font-family:monospace;margin-bottom:4px;'>Select rows to delete</div>", unsafe_allow_html=True)
+
+        to_delete = []
         header = (
             "<table class='bet-table'><thead><tr>"
-            "<th>PLAYER 1</th><th>PLAYER 2</th><th>MARKET</th>"
-            "<th>SELECTION</th><th>LINE</th><th>TARGET</th><th>MARKET PRICE</th>"
+            "<th></th><th>PLAYER 1</th><th>PLAYER 2</th><th>MARKET</th>"
+            "<th>SELECTION</th><th>LINE</th><th>TARGET</th><th>MARKET PRICE</th><th>KELLY %</th>"
             "</tr></thead><tbody>"
         )
-        rows = ""
-        for _, row in df.iterrows():
+
+        # We render the table HTML separately from checkboxes (Streamlit limitation).
+        # Show table first, then checkboxes below mapped by index.
+        rows_html = ""
+        for i, row in df.iterrows():
             mp = float(row["Market Price"])
             tgt = float(row["Target"])
             mp_color = "#a5d6a7" if mp > tgt else "#ef9a9a"
-            rows += (
+            kelly = row.get("Kelly Stake %", "")
+            rows_html += (
                 f"<tr>"
+                f"<td>{i+1}</td>"
                 f"<td>{row['Player 1']}</td><td>{row['Player 2']}</td>"
                 f"<td>{row['Market']}</td><td>{row['Selection']}</td>"
                 f"<td>{row['Line']}</td>"
                 f"<td style='color:#4fc3f7;font-weight:700;'>{tgt:.3f}</td>"
                 f"<td style='color:{mp_color};font-weight:700;'>{mp:.3f}</td>"
+                f"<td style='color:#b39ddb;font-weight:700;'>{kelly}</td>"
                 f"</tr>"
             )
-        st.markdown(header + rows + "</tbody></table>", unsafe_allow_html=True)
+        st.markdown(header + rows_html + "</tbody></table>", unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("<div style='font-size:10px;color:#444455;font-family:monospace;'>Select rows to remove:</div>", unsafe_allow_html=True)
+
+        # Render checkboxes in a compact row
+        check_cols = st.columns(min(len(df), 12))
+        for i, row in df.iterrows():
+            col_idx = i % len(check_cols)
+            with check_cols[col_idx]:
+                if st.checkbox(f"#{i+1}", key=f"del_row_{i}"):
+                    to_delete.append(i)
+
+        if to_delete:
+            if st.button(f"🗑 Delete selected ({len(to_delete)})", key="del_selected"):
+                st.session_state["bet_slip"] = df.drop(index=to_delete).reset_index(drop=True)
+                st.rerun()
 
     st.markdown("<br>", unsafe_allow_html=True)
     btn1, btn2, _ = st.columns([1, 1, 8])
 
     with btn1:
-        if not df.empty:
-            csv_data = df.to_csv(index=False)
+        if not st.session_state["bet_slip"].empty:
+            csv_data = st.session_state["bet_slip"].to_csv(index=False)
             st.download_button("💾 Save CSV", data=csv_data, file_name="bet_slip.csv",
                                mime="text/csv", key="dl_csv")
 
     with btn2:
-        if st.button("🗑 Clear", key="clear_bets"):
+        if st.button("🗑 Clear All", key="clear_bets"):
             st.session_state["bet_slip"] = pd.DataFrame(
-                columns=["Player 1", "Player 2", "Market", "Selection", "Line", "Target", "Market Price"])
+                columns=["Player 1", "Player 2", "Market", "Selection", "Line",
+                         "Target", "Market Price", "Kelly Stake %"])
             st.rerun()
