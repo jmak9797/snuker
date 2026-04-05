@@ -256,6 +256,49 @@ st.markdown("""
         margin-top: 2px;
     }
 
+    /* Handicap rows */
+    .hcap-row {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 0;
+        border-bottom: 1px solid #1a1a2a;
+    }
+    .hcap-row:last-child { border-bottom: none; }
+    .hcap-label {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 13px;
+        color: #ffffff;
+        width: 52px;
+        flex-shrink: 0;
+    }
+    .hcap-bar-bg {
+        flex: 1;
+        background-color: #12121e;
+        border-radius: 4px;
+        height: 10px;
+    }
+    .hcap-bar-fill {
+        border-radius: 4px;
+        height: 10px;
+    }
+    .hcap-pct {
+        font-family: 'Rajdhani', sans-serif;
+        font-weight: 700;
+        font-size: 15px;
+        width: 52px;
+        text-align: right;
+        flex-shrink: 0;
+    }
+    .hcap-odds {
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 11px;
+        color: #888888;
+        width: 100px;
+        text-align: right;
+        flex-shrink: 0;
+    }
+
     div[data-testid="stHorizontalBlock"] { gap: 16px; }
 </style>
 """, unsafe_allow_html=True)
@@ -301,7 +344,6 @@ def predict_match(pa, pb, first_to, elob_w, edge, ratings_elob, ratings_elof):
     prob_a = elob_w * bpma + elof_w * fpma
     prob_b = 1 - prob_a
 
-    # Blended frame probability
     pfa_blended = elob_w * bpfa + elof_w * fpfa
 
     return dict(
@@ -324,22 +366,64 @@ def predict_match(pa, pb, first_to, elob_w, edge, ratings_elob, ratings_elof):
 
 
 # ════════════════════════════════════════════════════════════════════
-# MODEL FUNCTIONS — Century prediction
+# MODEL FUNCTIONS — Scoreline & Handicap
 # ════════════════════════════════════════════════════════════════════
 
-def _match_scoreline_probs(prob_a: float, first_to: int) -> pd.DataFrame:
-    scorelines = []
+def scoreline_probs(prob_a: float, first_to: int) -> dict:
+    """
+    Returns {(p1_frames, p2_frames): probability} for all valid scorelines.
+    """
+    probs = {}
+    # Player 1 wins the match
     for p2_wins in range(first_to):
         p1_wins = first_to
         total_frames = p1_wins + p2_wins - 1
         prob = math.comb(total_frames, p2_wins) * (prob_a ** p1_wins) * ((1 - prob_a) ** p2_wins)
-        scorelines.append((p1_wins, p2_wins, prob))
+        probs[(p1_wins, p2_wins)] = prob
+    # Player 2 wins the match
     for p1_wins in range(first_to):
         p2_wins = first_to
         total_frames = p1_wins + p2_wins - 1
         prob = math.comb(total_frames, p1_wins) * (prob_a ** p1_wins) * ((1 - prob_a) ** p2_wins)
-        scorelines.append((p1_wins, p2_wins, prob))
-    return pd.DataFrame(scorelines, columns=["p1_frames", "p2_frames", "prob"])
+        probs[(p1_wins, p2_wins)] = prob
+    return probs
+
+
+def handicap_prob_p1(scorelines: dict, handicap: float) -> float:
+    """
+    Probability that player 1 covers the handicap.
+    handicap is applied to player 1's score.
+    e.g. handicap=-1.5: player 1 wins if (p1 - 1.5) > p2, i.e. wins by 2+
+    e.g. handicap=+1.5: player 1 wins if (p1 + 1.5) > p2, i.e. loses by 1 or wins
+    """
+    return sum(prob for (p1, p2), prob in scorelines.items() if (p1 + handicap) > p2)
+
+
+def handicap_prob_p2(scorelines: dict, handicap: float) -> float:
+    """
+    Probability that player 2 covers the handicap (handicap applied to player 2's score).
+    Same logic mirrored.
+    """
+    return sum(prob for (p1, p2), prob in scorelines.items() if (p2 + handicap) > p1)
+
+
+# ════════════════════════════════════════════════════════════════════
+# MODEL FUNCTIONS — Century prediction
+# ════════════════════════════════════════════════════════════════════
+
+def _match_scoreline_df(prob_a: float, first_to: int) -> pd.DataFrame:
+    rows = []
+    for p2_wins in range(first_to):
+        p1_wins = first_to
+        total_frames = p1_wins + p2_wins - 1
+        prob = math.comb(total_frames, p2_wins) * (prob_a ** p1_wins) * ((1 - prob_a) ** p2_wins)
+        rows.append((p1_wins, p2_wins, prob))
+    for p1_wins in range(first_to):
+        p2_wins = first_to
+        total_frames = p1_wins + p2_wins - 1
+        prob = math.comb(total_frames, p1_wins) * (prob_a ** p1_wins) * ((1 - prob_a) ** p2_wins)
+        rows.append((p1_wins, p2_wins, prob))
+    return pd.DataFrame(rows, columns=["p1_frames", "p2_frames", "prob"])
 
 
 def _century_distribution(scoreline_df: pd.DataFrame, cen_rate: float) -> dict:
@@ -390,8 +474,8 @@ def predict_match_centuries(
     cen_rate1 = player_rates.get(player1_name, 0.0) or 0.0
     cen_rate2 = player_rates.get(player2_name, 0.0) or 0.0
 
-    scorelines = _match_scoreline_probs(p1_frame_win_prob, first_to)
-    p2_scorelines = _match_scoreline_probs(1 - p1_frame_win_prob, first_to)
+    scorelines = _match_scoreline_df(p1_frame_win_prob, first_to)
+    p2_scorelines = _match_scoreline_df(1 - p1_frame_win_prob, first_to)
 
     dist1 = _century_distribution(scorelines, cen_rate1)
     dist2 = _century_distribution(p2_scorelines, cen_rate2)
@@ -468,7 +552,6 @@ with sl3:
 st.markdown("<br>", unsafe_allow_html=True)
 run = st.button("RUN PREDICTION")
 
-# Compute shared result once and store in session state
 if run:
     if player_a == player_b:
         st.error("Please select two different players.")
@@ -486,11 +569,15 @@ if run:
 # TABS
 # ════════════════════════════════════════════════════════════════════
 
-tab_match, tab_centuries = st.tabs(["📊  MATCH ODDS", "🔴  CENTURIES"])
+tab_match, tab_handicap, tab_centuries = st.tabs([
+    "📊  MATCH ODDS",
+    "↕️  HANDICAPS",
+    "🔴  CENTURIES",
+])
 
 
 # ────────────────────────────────────────────────────────────────────
-# TAB 1 — Match Odds (original display)
+# TAB 1 — Match Odds
 # ────────────────────────────────────────────────────────────────────
 
 def render_card(col, name, prob, true_o, edge_p,
@@ -565,7 +652,123 @@ with tab_match:
 
 
 # ────────────────────────────────────────────────────────────────────
-# TAB 2 — Centuries
+# TAB 2 — Handicaps
+# ────────────────────────────────────────────────────────────────────
+
+def _build_handicap_card_html(name: str, name_class: str, card_class: str,
+                               color: str, lines_data: list, edge: float) -> str:
+    """
+    lines_data: list of (label_str, probability) already filtered.
+    Builds the full card HTML as a single string.
+    """
+    header_html = f"""
+    <div class="{card_class}">
+        <div class="{name_class}">{name}</div>
+        <hr class="divider">
+        <div style="display:flex;justify-content:flex-end;margin-bottom:2px;">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;
+                         color:#444455;letter-spacing:1px;">TRUE / TARGET</span>
+        </div>
+    """
+    rows_html = ""
+    for label, prob in lines_data:
+        true_odds = 1 / prob if prob > 0 else float("inf")
+        tgt_odds  = true_odds * (1 + edge)
+        bar_w     = int(prob * 100)
+        rows_html += f"""
+        <div class="hcap-row">
+            <div class="hcap-label">{label}</div>
+            <div class="hcap-bar-bg">
+                <div class="hcap-bar-fill" style="background:{color};width:{bar_w}%;"></div>
+            </div>
+            <div class="hcap-pct" style="color:{color};">{prob*100:.1f}%</div>
+            <div class="hcap-odds">{true_odds:.3f} / {tgt_odds:.3f}</div>
+        </div>
+        """
+
+    if not rows_html:
+        rows_html = '<div class="match-info" style="padding:16px 0;">No lines in range for this match length.</div>'
+
+    return header_html + rows_html + "</div>"
+
+
+with tab_handicap:
+    if "result" not in st.session_state:
+        st.markdown('<div class="match-info">Select players and press RUN PREDICTION</div>', unsafe_allow_html=True)
+    else:
+        r  = st.session_state["result"]
+        pa, pb = st.session_state["players"]
+        ft = st.session_state["first_to"]
+        h_edge = st.session_state["edge"]
+
+        st.markdown(
+            f'<div class="match-info">'
+            f'First to {ft} &nbsp;·&nbsp; Best of {r["best_of"]}'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        sl = scoreline_probs(r["pfa_blended"], ft)
+
+        # Candidate lines: -3.5, -2.5, -1.5, +1.5, +2.5, +3.5
+        # A line of magnitude N-0.5 requires winning by N frames clear,
+        # which needs first_to >= N+1 (e.g. -1.5 needs first_to >= 2)
+        candidate_lines = [-3.5, -2.5, -1.5, 1.5, 2.5, 3.5]
+
+        def line_possible(line: float, ft: int) -> bool:
+            # Need to be able to win by ceil(abs(line)) frames
+            # For -1.5: need to win by 2, requires ft >= 2
+            # For -2.5: need to win by 3, requires ft >= 3 etc.
+            frames_needed = math.ceil(abs(line))
+            return ft >= frames_needed
+
+        # Player A handicap lines (handicap on player A's score)
+        lines_a = []
+        for line in candidate_lines:
+            if not line_possible(line, ft):
+                continue
+            prob = handicap_prob_p1(sl, line)
+            if 0.05 <= prob <= 0.95:
+                sign = "+" if line > 0 else ""
+                lines_a.append((f"{sign}{line}", prob))
+
+        # Player B handicap lines (handicap on player B's score, same magnitudes)
+        lines_b = []
+        for line in candidate_lines:
+            if not line_possible(line, ft):
+                continue
+            prob = handicap_prob_p2(sl, line)
+            if 0.05 <= prob <= 0.95:
+                sign = "+" if line > 0 else ""
+                lines_b.append((f"{sign}{line}", prob))
+
+        col_ha, col_hb = st.columns(2)
+
+        with col_ha:
+            st.markdown(
+                _build_handicap_card_html(pa, "player-name-a", "card-a", "#4fc3f7", lines_a, h_edge),
+                unsafe_allow_html=True
+            )
+
+        with col_hb:
+            st.markdown(
+                _build_handicap_card_html(pb, "player-name-b", "card-b", "#ef9a9a", lines_b, h_edge),
+                unsafe_allow_html=True
+            )
+
+        st.markdown("""
+        <div style="margin-top:16px;font-family:'IBM Plex Mono',monospace;font-size:10px;
+                    color:#444455;text-align:center;">
+            handicap applied to each player's frame score &nbsp;·&nbsp;
+            lines with probability &lt;5% or &gt;95% hidden &nbsp;·&nbsp;
+            true / target odds shown at right
+        </div>
+        """, unsafe_allow_html=True)
+
+
+# ────────────────────────────────────────────────────────────────────
+# TAB 3 — Centuries
 # ────────────────────────────────────────────────────────────────────
 
 def _build_ou_html(color, ou, line, cen_edge):
@@ -613,7 +816,6 @@ def _build_dist_html(dist: dict, color: str) -> str:
         "<th>PROB</th><th>TRUE</th></tr></thead>"
         f"<tbody>{rows}</tbody></table>"
     )
-    
 
 
 with tab_centuries:
@@ -627,9 +829,8 @@ with tab_centuries:
                                   step=0.5, format="%.1f%%", key="cen_edge")
         cen_edge = cen_edge_pct / 100
 
-        # Max line = first_to (a player can't make more centuries than frames won)
         max_line_val = ft
-        line_options = [x / 2 for x in range(1, max_line_val * 2 + 1, 2)]  # 0.5, 1.5, 2.5 ...
+        line_options = [x / 2 for x in range(1, max_line_val * 2 + 1, 2)]
 
         st.markdown("<br>", unsafe_allow_html=True)
         lc1, lc2, lc3 = st.columns(3)
@@ -648,7 +849,7 @@ with tab_centuries:
                 line_b = st.select_slider(f"{pb} LINE", options=line_options,
                                           value=line_options[min(1, len(line_options)-1)], key="line_b")
         with lc3:
-            match_line_options = [x / 2 for x in range(1, ft * 4, 2)]  # wider range for match
+            match_line_options = [x / 2 for x in range(1, ft * 4, 2)]
             if len(match_line_options) == 1:
                 line_m = match_line_options[0]
                 st.markdown(f'<div class="match-info">MATCH LINE: {line_m}</div>', unsafe_allow_html=True)
@@ -658,7 +859,6 @@ with tab_centuries:
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # Run century model
         cen_result = predict_match_centuries(
             player1_name=pa,
             player2_name=pb,
@@ -671,7 +871,6 @@ with tab_centuries:
         ou_b = over_under(cen_result, pb, line_b)
         ou_m = over_under(cen_result, "match", line_m)
 
-        # Display cards
         col_ca, col_cb, col_cm = st.columns(3)
 
         with col_ca:
