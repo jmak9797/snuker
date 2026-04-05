@@ -2,3 +2,4 @@ streamlit
 scipy
 plotly
 pyarrow
+xlrd
