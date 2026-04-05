@@ -723,7 +723,7 @@ with tab_betslip:
 
 @st.cache_data
 def load_match_df():
-    df = pd.read_parquet("player_matches_df.parquet")
+    df = pd.read_parquet("player_matches_df.parq")
     df["match_date"] = pd.to_datetime(df["match_date"]).dt.date
     return df
 
@@ -849,7 +849,7 @@ def _rating_chart(df_player: pd.DataFrame, name: str, color: str):
 with tab_results:
     if not _results_available:
         st.markdown(
-            "<div class='match-info'>player_matches_df.csv not found in app directory.</div>",
+            "<div class='match-info'>player_matches_df.parq not found in app directory.</div>",
             unsafe_allow_html=True)
     elif "players" not in st.session_state:
         st.markdown(
