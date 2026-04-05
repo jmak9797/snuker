@@ -657,10 +657,6 @@ with tab_match:
 
 def _build_handicap_card_html(name: str, name_class: str, card_class: str,
                                color: str, lines_data: list, edge: float) -> str:
-    """
-    lines_data: list of (label_str, probability) already filtered.
-    Builds the full card HTML as a single string.
-    """
     header_html = f"""
     <div class="{card_class}">
         <div class="{name_class}">{name}</div>
@@ -676,18 +672,22 @@ def _build_handicap_card_html(name: str, name_class: str, card_class: str,
         tgt_odds  = true_odds * (1 + edge)
         bar_w     = int(prob * 100)
         rows_html += f"""
-        <div class="hcap-row">
-            <div class="hcap-label">{label}</div>
-            <div class="hcap-bar-bg">
-                <div class="hcap-bar-fill" style="background:{color};width:{bar_w}%;"></div>
+        <div style="display:flex;align-items:center;gap:12px;padding:10px 0;
+                    border-bottom:1px solid #1a1a2a;">
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:13px;
+                        color:#ffffff;width:52px;flex-shrink:0;">{label}</div>
+            <div style="flex:1;background:#12121e;border-radius:4px;height:10px;">
+                <div style="background:{color};border-radius:4px;height:10px;width:{bar_w}%;"></div>
             </div>
-            <div class="hcap-pct" style="color:{color};">{prob*100:.1f}%</div>
-            <div class="hcap-odds">{true_odds:.3f} / {tgt_odds:.3f}</div>
+            <div style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:15px;
+                        color:{color};width:52px;text-align:right;flex-shrink:0;">{prob*100:.1f}%</div>
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#888888;
+                        width:100px;text-align:right;flex-shrink:0;">{true_odds:.3f} / {tgt_odds:.3f}</div>
         </div>
         """
 
     if not rows_html:
-        rows_html = '<div class="match-info" style="padding:16px 0;">No lines in range for this match length.</div>'
+        rows_html = '<div style="text-align:center;color:#555566;font-size:12px;padding:16px 0;">No lines in range for this match length.</div>'
 
     return header_html + rows_html + "</div>"
 
