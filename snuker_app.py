@@ -723,7 +723,7 @@ with tab_betslip:
 
 @st.cache_data
 def load_match_df():
-    df = pd.read_excel("player_matches_df.xls")
+    df = pd.read_excel("player_matches_df.xls", engine="xlrd")
     df["match_date"] = pd.to_datetime(df["match_date"]).dt.date
     return df
 
