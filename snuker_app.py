@@ -568,65 +568,52 @@ with tab_match:
 # TAB 2 — Centuries
 # ────────────────────────────────────────────────────────────────────
 
-def _ou_block(label, color, ou, line, cen_edge):
-    """Render an over/under block with true and target odds."""
+def _build_ou_html(color, ou, line, cen_edge):
     over_true  = 1 / ou["over"]  if ou["over"]  > 0 else float("inf")
     under_true = 1 / ou["under"] if ou["under"] > 0 else float("inf")
     over_tgt   = over_true  * (1 + cen_edge)
     under_tgt  = under_true * (1 + cen_edge)
-    st.markdown(f"""
+    return f"""
     <div style="margin-bottom:6px;">
-        <div style="font-size:10px; letter-spacing:2px; color:#444455;
-                    font-family:'IBM Plex Mono',monospace; margin-bottom:6px;">
+        <div style="font-size:10px;letter-spacing:2px;color:#444455;
+                    font-family:'IBM Plex Mono',monospace;margin-bottom:6px;">
             LINE &nbsp;{line}
         </div>
-        <div style="display:flex; gap:8px;">
-            <div class="ou-card" style="flex:1; border-left: 3px solid {color};">
+        <div style="display:flex;gap:8px;">
+            <div class="ou-card" style="flex:1;border-left:3px solid {color};">
                 <div class="ou-label">OVER {line}</div>
                 <div class="ou-prob" style="color:{color};">{ou['over']*100:.1f}%</div>
                 <div class="ou-odds">true {over_true:.3f} &nbsp;·&nbsp; tgt {over_tgt:.3f}</div>
             </div>
-            <div class="ou-card" style="flex:1; border-left: 3px solid #444455;">
+            <div class="ou-card" style="flex:1;border-left:3px solid #444455;">
                 <div class="ou-label">UNDER {line}</div>
                 <div class="ou-prob" style="color:#888888;">{ou['under']*100:.1f}%</div>
                 <div class="ou-odds">true {under_true:.3f} &nbsp;·&nbsp; tgt {under_tgt:.3f}</div>
             </div>
         </div>
     </div>
-    """, unsafe_allow_html=True)
+    """
 
 
-def _dist_table(dist: dict, color: str):
-    """Render a compact probability distribution table."""
-    rows = ""
+def _build_dist_html(dist: dict, color: str) -> str:
+    rows = """
     for k, v in dist.items():
-        bar_w = int(v * 200)
-        bar_w = min(bar_w, 100)
-        rows += f"""
-        <tr>
-            <td>{k}</td>
-            <td>
-                <div style="background:#12121e;border-radius:3px;height:8px;width:100%;">
-                    <div style="background:{color};border-radius:3px;height:8px;width:{bar_w}%;"></div>
-                </div>
-            </td>
-            <td>{v*100:.2f}%</td>
-            <td>{1/v:.2f}</td>
-        </tr>
-        """
-    st.markdown(f"""
-    <table class="cen-table">
-        <thead>
-            <tr>
-                <th>CENTURIES</th>
-                <th style="width:40%;">DIST</th>
-                <th>PROB</th>
-                <th>TRUE</th>
-            </tr>
-        </thead>
-        <tbody>{rows}</tbody>
-    </table>
-    """, unsafe_allow_html=True)
+        bar_w = min(int(v * 200), 100)
+        rows += (
+            f"<tr><td>{k}</td>"
+            f"<td><div style='background:#12121e;border-radius:3px;height:8px;width:100%;'>"
+            f"<div style='background:{color};border-radius:3px;height:8px;width:{bar_w}%;'></div>"
+            f"</div></td>"
+            f"<td>{v*100:.2f}%</td>"
+            f"<td>{1/v:.2f}</td></tr>"
+        )
+    return (
+        "<table class='cen-table'>"
+        "<thead><tr><th>CENTURIES</th><th style='width:40%;'>DIST</th>"
+        "<th>PROB</th><th>TRUE</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table>"
+    )
+    """
 
 
 with tab_centuries:
@@ -689,47 +676,47 @@ with tab_centuries:
 
         with col_ca:
             cen_rate_a = player_rates.get(pa, 0.0) or 0.0
-            st.markdown(f"""
-            <div class="card-a">
-                <div class="player-name-a">{pa}</div>
-                <div class="breakdown-row" style="margin-bottom:8px;">
-                    <span>century rate (given frame win)</span>
-                    <span class="breakdown-val">{cen_rate_a*100:.1f}%</span>
-                </div>
-                <hr class="divider">
-            """, unsafe_allow_html=True)
-            _ou_block(pa, "#4fc3f7", ou_a, line_a, cen_edge)
-            st.markdown('<hr class="divider"><div class="section-cap">FULL DISTRIBUTION</div>', unsafe_allow_html=True)
-            _dist_table(cen_result[pa], "#4fc3f7")
-            st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="card-a">'
+                f'<div class="player-name-a">{pa}</div>'
+                f'<div class="breakdown-row" style="margin-bottom:8px;">'
+                f'<span>century rate (given frame win)</span>'
+                f'<span class="breakdown-val">{cen_rate_a*100:.1f}%</span></div>'
+                f'<hr class="divider">'
+                + _build_ou_html("#4fc3f7", ou_a, line_a, cen_edge)
+                + '<hr class="divider"><div class="section-cap">FULL DISTRIBUTION</div>'
+                + _build_dist_html(cen_result[pa], "#4fc3f7")
+                + '</div>',
+                unsafe_allow_html=True
+            )
 
         with col_cb:
             cen_rate_b = player_rates.get(pb, 0.0) or 0.0
-            st.markdown(f"""
-            <div class="card-b">
-                <div class="player-name-b">{pb}</div>
-                <div class="breakdown-row" style="margin-bottom:8px;">
-                    <span>century rate (given frame win)</span>
-                    <span class="breakdown-val">{cen_rate_b*100:.1f}%</span>
-                </div>
-                <hr class="divider">
-            """, unsafe_allow_html=True)
-            _ou_block(pb, "#ef9a9a", ou_b, line_b, cen_edge)
-            st.markdown('<hr class="divider"><div class="section-cap">FULL DISTRIBUTION</div>', unsafe_allow_html=True)
-            _dist_table(cen_result[pb], "#ef9a9a")
-            st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="card-b">'
+                f'<div class="player-name-b">{pb}</div>'
+                f'<div class="breakdown-row" style="margin-bottom:8px;">'
+                f'<span>century rate (given frame win)</span>'
+                f'<span class="breakdown-val">{cen_rate_b*100:.1f}%</span></div>'
+                f'<hr class="divider">'
+                + _build_ou_html("#ef9a9a", ou_b, line_b, cen_edge)
+                + '<hr class="divider"><div class="section-cap">FULL DISTRIBUTION</div>'
+                + _build_dist_html(cen_result[pb], "#ef9a9a")
+                + '</div>',
+                unsafe_allow_html=True
+            )
 
         with col_cm:
-            st.markdown(f"""
-            <div class="card-match">
-                <div class="player-name-match">MATCH TOTAL</div>
-                <div class="breakdown-row" style="margin-bottom:8px;">
-                    <span>combined centuries</span>
-                    <span class="breakdown-val">{pa} + {pb}</span>
-                </div>
-                <hr class="divider">
-            """, unsafe_allow_html=True)
-            _ou_block("match", "#b39ddb", ou_m, line_m, cen_edge)
-            st.markdown('<hr class="divider"><div class="section-cap">FULL DISTRIBUTION</div>', unsafe_allow_html=True)
-            _dist_table(cen_result["match"], "#b39ddb")
-            st.markdown("</div>", unsafe_allow_html=True)
+            st.markdown(
+                f'<div class="card-match">'
+                f'<div class="player-name-match">MATCH TOTAL</div>'
+                f'<div class="breakdown-row" style="margin-bottom:8px;">'
+                f'<span>combined centuries</span>'
+                f'<span class="breakdown-val">{pa} + {pb}</span></div>'
+                f'<hr class="divider">'
+                + _build_ou_html("#b39ddb", ou_m, line_m, cen_edge)
+                + '<hr class="divider"><div class="section-cap">FULL DISTRIBUTION</div>'
+                + _build_dist_html(cen_result["match"], "#b39ddb")
+                + '</div>',
+                unsafe_allow_html=True
+            )
