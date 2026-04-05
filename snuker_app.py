@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from scipy.stats import binom
+import plotly.graph_objects as go
 
 # ── Page config ──────────────────────────────────────────────────────
 st.set_page_config(page_title="Match Predictor", page_icon="🎱", layout="wide")
@@ -358,8 +359,8 @@ if run:
 # TABS
 # ════════════════════════════════════════════════════════════════════
 
-tab_match, tab_handicap, tab_centuries, tab_betslip = st.tabs([
-    "📊  MATCH ODDS", "↕️  HANDICAPS", "🔴  CENTURIES", "📋  BET SLIP",
+tab_match, tab_handicap, tab_centuries, tab_betslip, tab_results = st.tabs([
+    "📊  MATCH ODDS", "↕️  HANDICAPS", "🔴  CENTURIES", "📋  BET SLIP", "📅  RESULTS",
 ])
 
 
@@ -714,3 +715,223 @@ with tab_betslip:
                 columns=["Player 1", "Player 2", "Market", "Selection", "Line",
                          "Target", "Market Price", "Kelly Stake %"])
             st.rerun()
+
+
+# ════════════════════════════════════════════════════════════════════
+# LOAD MATCH HISTORY
+# ════════════════════════════════════════════════════════════════════
+
+@st.cache_data
+def load_match_df():
+    df = pd.read_parquet("player_matches_df.parquet")
+    df["match_date"] = pd.to_datetime(df["match_date"]).dt.date
+    return df
+
+try:
+    match_df = load_match_df()
+    _results_available = True
+except FileNotFoundError:
+    match_df = pd.DataFrame()
+    _results_available = False
+
+
+# ════════════════════════════════════════════════════════════════════
+# HELPERS — Results display
+# ════════════════════════════════════════════════════════════════════
+
+def _results_table_html(df_in: pd.DataFrame, color: str) -> str:
+    """Render a styled results table as HTML. Win rows highlighted faintly."""
+    cols = ["match_date", "tournament_name", "round_name", "opposition_name",
+            "player_score", "opposition_score", "player_rating", "oppo_rating",
+            "player_prob", "player_delta", "player_matches_played", "oppo_matches_played"]
+    headers = ["DATE", "TOURNAMENT", "ROUND", "OPPONENT",
+               "PTS", "OPP PTS", "RATING", "OPP RTG",
+               "WIN PROB", "DELTA", "P MATCHES", "O MATCHES"]
+
+    head_html = "".join(f"<th>{h}</th>" for h in headers)
+    rows_html = ""
+    for _, row in df_in.iterrows():
+        won = int(row.get("player_score", 0)) > int(row.get("opposition_score", 0))
+        bg  = "background:#1a2a1a;" if won else ""
+        delta = row.get("player_delta", 0)
+        delta_color = "#a5d6a7" if delta > 0 else "#ef9a9a"
+        pm = int(row.get("player_matches_played", 0))
+        pm_style = "color:#ef5350;font-weight:700;" if pm < 50 else "color:#cccccc;"
+        om = int(row.get("oppo_matches_played", 0))
+        om_style = "color:#ef5350;font-weight:700;" if om < 50 else "color:#cccccc;"
+        rows_html += (
+            f"<tr style='{bg}'>"
+            f"<td>{row.get('match_date','')}</td>"
+            f"<td style='color:#cccccc;'>{row.get('tournament_name','')}</td>"
+            f"<td>{row.get('round_name','')}</td>"
+            f"<td style='color:{color};font-weight:700;'>{row.get('opposition_name','')}</td>"
+            f"<td style='color:#ffffff;font-weight:700;'>{row.get('player_score','')}</td>"
+            f"<td>{row.get('opposition_score','')}</td>"
+            f"<td style='color:#4fc3f7;'>{row.get('player_rating', 0):.1f}</td>"
+            f"<td style='color:#888888;'>{row.get('oppo_rating', 0):.1f}</td>"
+            f"<td>{row.get('player_prob', 0):.1%}</td>"
+            f"<td style='color:{delta_color};font-weight:700;'>{delta:+.3f}</td>"
+            f"<td style='{pm_style}'>{pm}</td>"
+            f"<td style='{om_style}'>{om}</td>"
+            f"</tr>"
+        )
+    return (
+        "<table class='bet-table' style='font-size:11px;'>"
+        f"<thead><tr>{head_html}</tr></thead>"
+        f"<tbody>{rows_html}</tbody></table>"
+    )
+
+
+def _h2h_table_html(df_in: pd.DataFrame, pa: str, color_a: str, color_b: str) -> str:
+    headers = ["DATE", "TOURNAMENT", "ROUND", "PLAYER", "PTS", "OPP PTS", "WIN PROB", "DELTA"]
+    head_html = "".join(f"<th>{h}</th>" for h in headers)
+    rows_html = ""
+    for _, row in df_in.iterrows():
+        is_pa = row["player_name"] == pa
+        color = color_a if is_pa else color_b
+        won = int(row.get("player_score", 0)) > int(row.get("opposition_score", 0))
+        bg  = "background:#1a2a1a;" if won else ""
+        delta = row.get("player_delta", 0)
+        delta_color = "#a5d6a7" if delta > 0 else "#ef9a9a"
+        rows_html += (
+            f"<tr style='{bg}'>"
+            f"<td>{row.get('match_date','')}</td>"
+            f"<td style='color:#cccccc;'>{row.get('tournament_name','')}</td>"
+            f"<td>{row.get('round_name','')}</td>"
+            f"<td style='color:{color};font-weight:700;'>{row.get('player_name','')}</td>"
+            f"<td style='color:#ffffff;font-weight:700;'>{row.get('player_score','')}</td>"
+            f"<td>{row.get('opposition_score','')}</td>"
+            f"<td>{row.get('player_prob', 0):.1%}</td>"
+            f"<td style='color:{delta_color};font-weight:700;'>{delta:+.3f}</td>"
+            f"</tr>"
+        )
+    return (
+        "<table class='bet-table' style='font-size:11px;'>"
+        f"<thead><tr>{head_html}</tr></thead>"
+        f"<tbody>{rows_html}</tbody></table>"
+    )
+
+
+def _rating_chart(df_player: pd.DataFrame, name: str, color: str):
+    """Plotly rating-over-time line chart."""
+    df_sorted = df_player.sort_values("match_date")
+    # Deduplicate by date — take last rating on each date
+    df_sorted = df_sorted.drop_duplicates(subset="match_date", keep="last")
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=df_sorted["match_date"],
+        y=df_sorted["player_rating"],
+        mode="lines+markers",
+        name=name,
+        line=dict(color=color, width=2),
+        marker=dict(color=color, size=4),
+        hovertemplate="%{x}<br>Rating: %{y:.1f}<extra></extra>",
+    ))
+    fig.update_layout(
+        paper_bgcolor="#13131f",
+        plot_bgcolor="#1e1e2e",
+        font=dict(family="IBM Plex Mono", color="#888888", size=11),
+        margin=dict(l=40, r=20, t=30, b=40),
+        height=220,
+        xaxis=dict(gridcolor="#2a2a3a", showgrid=True, zeroline=False),
+        yaxis=dict(gridcolor="#2a2a3a", showgrid=True, zeroline=False),
+        showlegend=False,
+        title=dict(text=f"{name} — Rating History", font=dict(color=color, size=13), x=0),
+    )
+    return fig
+
+
+# ════════════════════════════════════════════════════════════════════
+# TAB 5 — Results
+# ════════════════════════════════════════════════════════════════════
+
+with tab_results:
+    if not _results_available:
+        st.markdown(
+            "<div class='match-info'>player_matches_df.csv not found in app directory.</div>",
+            unsafe_allow_html=True)
+    elif "players" not in st.session_state:
+        st.markdown(
+            "<div class='match-info'>Run a prediction first to select players.</div>",
+            unsafe_allow_html=True)
+    else:
+        pa, pb = st.session_state["players"]
+
+        # N results slider — outside sub-tabs so it applies to both player views
+        n_results = st.slider("Last N results", min_value=5, max_value=100, value=20, step=5, key="n_results")
+
+        sub_pa, sub_pb, sub_h2h = st.tabs([f"👤  {pa}", f"👤  {pb}", "⚔️  H2H"])
+
+        # ── Player A sub-tab ──────────────────────────────────────
+        with sub_pa:
+            df_a = match_df[match_df["player_name"] == pa].sort_values("match_date", ascending=False)
+            if df_a.empty:
+                st.markdown(f"<div class='match-info'>No results found for {pa}.</div>", unsafe_allow_html=True)
+            else:
+                # Rating chart — full history
+                st.plotly_chart(_rating_chart(df_a, pa, "#4fc3f7"), use_container_width=True, config={"displayModeBar": False})
+
+                # Recent N results table
+                df_a_recent = df_a.head(n_results)
+                st.markdown(
+                    f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-bottom:6px;'>"
+                    f"LAST {len(df_a_recent)} RESULTS</div>",
+                    unsafe_allow_html=True)
+                st.markdown(_results_table_html(df_a_recent, "#ef9a9a"), unsafe_allow_html=True)
+
+        # ── Player B sub-tab ──────────────────────────────────────
+        with sub_pb:
+            df_b = match_df[match_df["player_name"] == pb].sort_values("match_date", ascending=False)
+            if df_b.empty:
+                st.markdown(f"<div class='match-info'>No results found for {pb}.</div>", unsafe_allow_html=True)
+            else:
+                st.plotly_chart(_rating_chart(df_b, pb, "#ef9a9a"), use_container_width=True, config={"displayModeBar": False})
+
+                df_b_recent = df_b.head(n_results)
+                st.markdown(
+                    f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-bottom:6px;'>"
+                    f"LAST {len(df_b_recent)} RESULTS</div>",
+                    unsafe_allow_html=True)
+                st.markdown(_results_table_html(df_b_recent, "#4fc3f7"), unsafe_allow_html=True)
+
+        # ── H2H sub-tab ───────────────────────────────────────────
+        with sub_h2h:
+            # All rows where pa played pb (from either perspective)
+            h2h_df = match_df[
+                ((match_df["player_name"] == pa) & (match_df["opposition_name"] == pb)) |
+                ((match_df["player_name"] == pb) & (match_df["opposition_name"] == pa))
+            ].copy().sort_values("match_date", ascending=False)
+
+            if h2h_df.empty:
+                st.markdown(
+                    f"<div class='match-info'>No head-to-head results found for {pa} vs {pb}.</div>",
+                    unsafe_allow_html=True)
+            else:
+                # Summary — wins for each player (from their own rows where they won)
+                wins_a = ((h2h_df["player_name"] == pa) &
+                          (h2h_df["player_score"] > h2h_df["opposition_score"])).sum()
+                wins_b = ((h2h_df["player_name"] == pb) &
+                          (h2h_df["player_score"] > h2h_df["opposition_score"])).sum()
+                total_matches = len(h2h_df) // 2  # two rows per match
+
+                st.markdown(
+                    f"<div style='display:flex;gap:24px;align-items:center;margin-bottom:16px;'>"
+                    f"<div style='background:#1e1e2e;border:2px solid #4fc3f7;border-radius:8px;padding:14px 24px;text-align:center;'>"
+                    f"<div style='font-size:9px;letter-spacing:2px;color:#444455;font-family:monospace;margin-bottom:4px;'>WINS</div>"
+                    f"<div style='font-size:36px;font-weight:700;color:#4fc3f7;font-family:Rajdhani,sans-serif;'>{wins_a}</div>"
+                    f"<div style='font-size:13px;color:#4fc3f7;font-family:Rajdhani,sans-serif;'>{pa}</div>"
+                    f"</div>"
+                    f"<div style='font-size:22px;color:#444455;font-family:Rajdhani,sans-serif;font-weight:700;'>vs</div>"
+                    f"<div style='background:#1e1e2e;border:2px solid #ef9a9a;border-radius:8px;padding:14px 24px;text-align:center;'>"
+                    f"<div style='font-size:9px;letter-spacing:2px;color:#444455;font-family:monospace;margin-bottom:4px;'>WINS</div>"
+                    f"<div style='font-size:36px;font-weight:700;color:#ef9a9a;font-family:Rajdhani,sans-serif;'>{wins_b}</div>"
+                    f"<div style='font-size:13px;color:#ef9a9a;font-family:Rajdhani,sans-serif;'>{pb}</div>"
+                    f"</div>"
+                    f"<div style='font-size:11px;color:#444455;font-family:monospace;'>{total_matches} matches</div>"
+                    f"</div>",
+                    unsafe_allow_html=True)
+
+                # Show last N (both rows per match, but grouped by match_id naturally via sort)
+                h2h_recent = h2h_df.head(n_results * 2)
+                st.markdown(_h2h_table_html(h2h_recent, pa, "#4fc3f7", "#ef9a9a"), unsafe_allow_html=True)
