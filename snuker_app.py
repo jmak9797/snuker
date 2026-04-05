@@ -596,7 +596,7 @@ def _build_ou_html(color, ou, line, cen_edge):
 
 
 def _build_dist_html(dist: dict, color: str) -> str:
-    rows = """
+    rows = ""
     for k, v in dist.items():
         bar_w = min(int(v * 200), 100)
         rows += (
@@ -613,7 +613,7 @@ def _build_dist_html(dist: dict, color: str) -> str:
         "<th>PROB</th><th>TRUE</th></tr></thead>"
         f"<tbody>{rows}</tbody></table>"
     )
-    """
+    
 
 
 with tab_centuries:
