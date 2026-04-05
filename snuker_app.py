@@ -657,39 +657,34 @@ with tab_match:
 
 def _build_handicap_card_html(name: str, name_class: str, card_class: str,
                                color: str, lines_data: list, edge: float) -> str:
-    header_html = f"""
-    <div class="{card_class}">
-        <div class="{name_class}">{name}</div>
-        <hr class="divider">
-        <div style="display:flex;justify-content:flex-end;margin-bottom:2px;">
-            <span style="font-family:'IBM Plex Mono',monospace;font-size:9px;
-                         color:#444455;letter-spacing:1px;">TRUE / TARGET</span>
-        </div>
-    """
     rows_html = ""
     for label, prob in lines_data:
         true_odds = 1 / prob if prob > 0 else float("inf")
         tgt_odds  = true_odds * (1 + edge)
         bar_w     = int(prob * 100)
-        rows_html += f"""
-        <div style="display:flex;align-items:center;gap:12px;padding:10px 0;
-                    border-bottom:1px solid #1a1a2a;">
-            <div style="font-family:'IBM Plex Mono',monospace;font-size:13px;
-                        color:#ffffff;width:52px;flex-shrink:0;">{label}</div>
-            <div style="flex:1;background:#12121e;border-radius:4px;height:10px;">
-                <div style="background:{color};border-radius:4px;height:10px;width:{bar_w}%;"></div>
-            </div>
-            <div style="font-family:'Rajdhani',sans-serif;font-weight:700;font-size:15px;
-                        color:{color};width:52px;text-align:right;flex-shrink:0;">{prob*100:.1f}%</div>
-            <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#888888;
-                        width:100px;text-align:right;flex-shrink:0;">{true_odds:.3f} / {tgt_odds:.3f}</div>
-        </div>
-        """
+        rows_html += (
+            f"<div style='display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #1a1a2a;'>"
+            f"<div style='font-family:monospace;font-size:13px;color:#ffffff;width:52px;flex-shrink:0;'>{label}</div>"
+            f"<div style='flex:1;background:#12121e;border-radius:4px;height:10px;'>"
+            f"<div style='background:{color};border-radius:4px;height:10px;width:{bar_w}%;'></div></div>"
+            f"<div style='font-size:15px;font-weight:700;color:{color};width:52px;text-align:right;flex-shrink:0;'>{prob*100:.1f}%</div>"
+            f"<div style='font-size:11px;color:#888888;width:110px;text-align:right;flex-shrink:0;'>{true_odds:.3f} / {tgt_odds:.3f}</div>"
+            f"</div>"
+        )
 
     if not rows_html:
-        rows_html = '<div style="text-align:center;color:#555566;font-size:12px;padding:16px 0;">No lines in range for this match length.</div>'
+        rows_html = "<div style='text-align:center;color:#555566;font-size:12px;padding:16px 0;'>No lines in range for this match length.</div>"
 
-    return header_html + rows_html + "</div>"
+    return (
+        f"<div class='{card_class}'>"
+        f"<div class='{name_class}'>{name}</div>"
+        f"<hr class='divider'>"
+        f"<div style='display:flex;justify-content:flex-end;margin-bottom:2px;'>"
+        f"<span style='font-size:9px;color:#444455;letter-spacing:1px;'>TRUE / TARGET</span>"
+        f"</div>"
+        + rows_html
+        + "</div>"
+    )
 
 
 with tab_handicap:
