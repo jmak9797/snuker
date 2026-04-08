@@ -858,28 +858,11 @@ with tab_results:
 # TAB 6 — Rankings
 # ────────────────────────────────────────────────────────────────────
 
-def _rankings_bar(value: float, max_val: float, color: str, width_px: int = 120) -> str:
-    """Inline mini bar for ratings column."""
-    pct = min(int((value / max_val) * 100), 100) if max_val > 0 else 0
-    bar_w = int(width_px * pct / 100)
-    return (
-        f"<div style='display:flex;align-items:center;gap:8px;'>"
-        f"<div style='background:#12121e;border-radius:3px;height:8px;width:{width_px}px;flex-shrink:0;'>"
-        f"<div style='background:{color};border-radius:3px;height:8px;width:{bar_w}px;'></div></div>"
-        f"<span style='color:{color};font-weight:700;font-size:13px;'>{value:.1f}</span>"
-        f"</div>"
-    )
+def _rankings_val(value: float, color: str) -> str:
+    return f"<span style='color:{color};font-weight:700;font-size:14px;'>{value:.1f}</span>"
 
-def _cen_bar(value: float, color: str, width_px: int = 100) -> str:
-    """Inline mini bar for century rate column (0–100% scale)."""
-    bar_w = int(width_px * value)
-    return (
-        f"<div style='display:flex;align-items:center;gap:8px;'>"
-        f"<div style='background:#12121e;border-radius:3px;height:8px;width:{width_px}px;flex-shrink:0;'>"
-        f"<div style='background:{color};border-radius:3px;height:8px;width:{bar_w}px;'></div></div>"
-        f"<span style='color:{color};font-weight:700;font-size:13px;'>{value*100:.1f}%</span>"
-        f"</div>"
-    )
+def _cen_val(value: float, color: str) -> str:
+    return f"<span style='color:{color};font-weight:700;font-size:14px;'>{value*100:.1f}%</span>"
 
 with tab_rankings:
     rc1, rc2 = st.columns(2)
@@ -933,7 +916,7 @@ with tab_rankings:
             "<th>PLAYER</th>"
             "<th class='num' style='width:90px;'>MATCHES</th>"
             "<th style='width:260px;'>ELO BETA</th>"
-            "<th style='width:200px;'>CEN WF</th>"
+            "<th style='width:200px;'>CEN RAT</th>"
             "</tr></thead><tbody>"
         )
 
@@ -949,16 +932,19 @@ with tab_rankings:
                 rank_color = "#cd7f32"
             else:
                 rank_color = "#444455"
+            row_style = ""
+            if rank_num == 16:
+                row_style = "border-bottom: 2px solid #2a2a3a;"
 
             matches_style = "color:#ef5350;font-weight:700;" if row["matches"] < 50 else "color:#888888;"
 
-            elob_bar = _rankings_bar(row["elob"], max_elob, "#4fc3f7")
-            cen_bar  = _cen_bar(row["cen_wf"], "#b39ddb") if row["cen_wf_valid"] and row["cen_wf"] > 0 else (
+            elob_bar = _rankings_val(row["elob"], "#4fc3f7")
+            cen_bar  = _cen_val(row["cen_wf"], "#b39ddb") if row["cen_wf_valid"] and row["cen_wf"] > 0 else (
                 "<span style='color:#444455;font-size:11px;'>—</span>"
             )
 
             rows_html += (
-                f"<tr>"
+                f"<tr style='{row_style}'>"
                 f"<td style='color:{rank_color};font-weight:700;font-size:13px;text-align:right;padding-right:12px;'>{rank_num}</td>"
                 f"<td style='color:#ffffff;font-weight:600;font-family:Rajdhani,sans-serif;font-size:15px;'>{row['player']}</td>"
                 f"<td style='text-align:right;{matches_style}'>{row['matches']}</td>"
