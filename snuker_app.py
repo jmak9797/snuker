@@ -57,6 +57,12 @@ st.markdown("""
     .bet-table th { color: #444455; font-size: 9px; letter-spacing: 2px; padding: 8px 12px; text-align: left; border-bottom: 1px solid #2a2a3a; }
     .bet-table td { padding: 8px 12px; color: #cccccc; text-align: left; border-bottom: 1px solid #1a1a2a; }
     .bet-table tr:last-child td { border-bottom: none; }
+    .rank-table { width: 100%; border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; font-size: 13px; }
+    .rank-table th { color: #444455; font-size: 9px; letter-spacing: 2px; padding: 10px 16px; text-align: left; border-bottom: 2px solid #2a2a3a; position: sticky; top: 0; background: #13131f; }
+    .rank-table th.num { text-align: right; }
+    .rank-table td { padding: 9px 16px; border-bottom: 1px solid #1a1a2a; vertical-align: middle; }
+    .rank-table tr:last-child td { border-bottom: none; }
+    .rank-table tr:hover td { background-color: #1a1a2a; }
     div[data-testid="stHorizontalBlock"] { gap: 16px; }
 </style>
 """, unsafe_allow_html=True)
@@ -72,7 +78,7 @@ if "bet_slip" not in st.session_state:
                  "Target", "Market Price", "Kelly Stake %"]
     )
 if "mp_version" not in st.session_state:
-    st.session_state["mp_version"] = 0   # bump this to wipe all market price inputs
+    st.session_state["mp_version"] = 0
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -80,13 +86,11 @@ if "mp_version" not in st.session_state:
 # ════════════════════════════════════════════════════════════════════
 
 def kelly_stake(market_odds: float, prob_win: float) -> float:
-    """Kelly criterion as a fraction of bankroll (capped at 0)."""
     b = market_odds - 1
     q = 1 - prob_win
     if b <= 0:
         return 0.0
-    k = (b * prob_win - q) / b
-    return max(k, 0.0)
+    return max((b * prob_win - q) / b, 0.0)
 
 
 def add_bet(player1, player2, market, selection, line, target, market_price):
@@ -105,7 +109,6 @@ def add_bet(player1, player2, market, selection, line, target, market_price):
 
 
 def market_input_row(key_prefix, target_val, pa, pb, market, selection, line):
-    """Renders market price text input + Add Bet button. Returns (mp|None, is_value)."""
     versioned_key = f"mp_{key_prefix}_v{st.session_state['mp_version']}"
     c1, c2 = st.columns([4, 1])
     with c1:
@@ -114,7 +117,6 @@ def market_input_row(key_prefix, target_val, pa, pb, market, selection, line):
     with c2:
         btn = st.button("＋", key=f"ab_{key_prefix}_v{st.session_state['mp_version']}",
                         help="Add to bet slip")
-
     mp_val, is_value = None, False
     if raw.strip():
         try:
@@ -122,11 +124,9 @@ def market_input_row(key_prefix, target_val, pa, pb, market, selection, line):
             is_value = mp_val > target_val
         except ValueError:
             pass
-
     if btn and mp_val is not None and is_value:
         add_bet(pa, pb, market, selection, line, target_val, mp_val)
         st.toast(f"Added: {selection} @ {mp_val:.3f}", icon="✅")
-
     return mp_val, is_value
 
 
@@ -141,14 +141,8 @@ def value_badge(mp_val, target_val, is_value):
 
 
 def collapse_dist(dist: dict, threshold: float = 0.02) -> list:
-    """
-    Returns a list of (label, prob) collapsing any tail entries below threshold
-    into a single 'N+' bucket.
-    """
     items = sorted(dist.items())
-    result = []
-    tail_prob = 0.0
-    tail_start = None
+    result, tail_prob, tail_start = [], 0.0, None
     for k, v in items:
         if v < threshold:
             if tail_start is None:
@@ -308,9 +302,22 @@ def load_player_rates():
     with open("player_rates.json", encoding="utf-8") as f:
         return json.load(f)
 
+@st.cache_data
+def load_match_df():
+    df = pd.read_csv("player_matches_df.csv")
+    df["match_date"] = pd.to_datetime(df["match_date"]).dt.date
+    return df
+
 ratings_elob, ratings_elof = load_ratings()
 player_rates = load_player_rates()
 sorted_players = sorted(ratings_elob.keys(), key=lambda p: ratings_elob[p]["rating"], reverse=True)
+
+try:
+    match_df = load_match_df()
+    _results_available = True
+except FileNotFoundError:
+    match_df = pd.DataFrame()
+    _results_available = False
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -351,7 +358,6 @@ if run:
     st.session_state["players"] = (player_a, player_b)
     st.session_state["first_to"] = first_to
     st.session_state["edge"] = edge
-    # Bump version to wipe all market price inputs across all tabs
     st.session_state["mp_version"] = st.session_state.get("mp_version", 0) + 1
 
 
@@ -359,8 +365,9 @@ if run:
 # TABS
 # ════════════════════════════════════════════════════════════════════
 
-tab_match, tab_handicap, tab_centuries, tab_betslip, tab_results = st.tabs([
-    "📊  MATCH ODDS", "↕️  HANDICAPS", "🔴  CENTURIES", "📋  BET SLIP", "📅  RESULTS",
+tab_match, tab_handicap, tab_centuries, tab_betslip, tab_results, tab_rankings = st.tabs([
+    "📊  MATCH ODDS", "↕️  HANDICAPS", "🔴  CENTURIES",
+    "📋  BET SLIP", "📅  RESULTS", "🏆  RANKINGS",
 ])
 
 
@@ -453,7 +460,6 @@ def _hcap_card_html(name, name_class, card_class, color, lines_data):
         f"</div>" + rows + "</div>"
     )
 
-
 with tab_handicap:
     if "result" not in st.session_state:
         st.markdown('<div class="match-info">Select players and press RUN PREDICTION</div>', unsafe_allow_html=True)
@@ -467,7 +473,6 @@ with tab_handicap:
         st.markdown("<br>", unsafe_allow_html=True)
 
         sl = scoreline_probs(r["pfa_blended"], ft)
-        # Extended to ±5.5
         candidate_lines = [-5.5, -4.5, -3.5, -2.5, -1.5, 1.5, 2.5, 3.5, 4.5, 5.5]
 
         def line_possible(line, ft):
@@ -544,7 +549,6 @@ def _ou_html(color, ou, line, cen_edge):
         f"</div></div></div>"
     )
 
-
 def _dist_html(dist, color, cen_edge):
     collapsed = collapse_dist(dist, threshold=0.02)
     rows = ""
@@ -567,7 +571,6 @@ def _dist_html(dist, color, cen_edge):
         f"</tr></thead><tbody>{rows}</tbody></table>"
     )
 
-
 def _cen_col(col, name, name_class, card_class, color, ou, line, dist, cen_edge, cr, pa, pb, pkey):
     with col:
         cr_html = (
@@ -577,8 +580,7 @@ def _cen_col(col, name, name_class, card_class, color, ou, line, dist, cen_edge,
         ) if cr > 0 else ""
         st.markdown(
             f"<div class='{card_class}'><div class='{name_class}'>{name}</div>"
-            + cr_html
-            + f"<hr class='divider'>"
+            + cr_html + f"<hr class='divider'>"
             + _ou_html(color, ou, line, cen_edge)
             + "<hr class='divider'><div class='section-cap'>FULL DISTRIBUTION</div>"
             + _dist_html(dist, color, cen_edge)
@@ -595,7 +597,6 @@ def _cen_col(col, name, name_class, card_class, color, ou, line, dist, cen_edge,
         mv, iv = market_input_row(f"{pkey}_u", ut, pa, pb, "Centuries", f"{name} Under {line}", line)
         if mv is not None:
             st.markdown(value_badge(mv, ut, iv), unsafe_allow_html=True)
-
 
 with tab_centuries:
     if "result" not in st.session_state:
@@ -652,9 +653,6 @@ with tab_betslip:
             "No bets added yet. Use the ＋ buttons in each tab.</div>",
             unsafe_allow_html=True)
     else:
-        # Checkbox column for row deletion
-        st.markdown("<div style='font-size:10px;color:#444455;font-family:monospace;margin-bottom:4px;'>Select rows to delete</div>", unsafe_allow_html=True)
-
         to_delete = []
         header = (
             "<table class='bet-table'><thead><tr>"
@@ -662,9 +660,6 @@ with tab_betslip:
             "<th>SELECTION</th><th>LINE</th><th>TARGET</th><th>MARKET PRICE</th><th>KELLY %</th>"
             "</tr></thead><tbody>"
         )
-
-        # We render the table HTML separately from checkboxes (Streamlit limitation).
-        # Show table first, then checkboxes below mapped by index.
         rows_html = ""
         for i, row in df.iterrows():
             mp = float(row["Market Price"])
@@ -672,8 +667,7 @@ with tab_betslip:
             mp_color = "#a5d6a7" if mp > tgt else "#ef9a9a"
             kelly = row.get("Kelly Stake %", "")
             rows_html += (
-                f"<tr>"
-                f"<td>{i+1}</td>"
+                f"<tr><td>{i+1}</td>"
                 f"<td>{row['Player 1']}</td><td>{row['Player 2']}</td>"
                 f"<td>{row['Market']}</td><td>{row['Selection']}</td>"
                 f"<td>{row['Line']}</td>"
@@ -686,15 +680,11 @@ with tab_betslip:
 
         st.markdown("<br>", unsafe_allow_html=True)
         st.markdown("<div style='font-size:10px;color:#444455;font-family:monospace;'>Select rows to remove:</div>", unsafe_allow_html=True)
-
-        # Render checkboxes in a compact row
         check_cols = st.columns(min(len(df), 12))
         for i, row in df.iterrows():
-            col_idx = i % len(check_cols)
-            with check_cols[col_idx]:
+            with check_cols[i % len(check_cols)]:
                 if st.checkbox(f"#{i+1}", key=f"del_row_{i}"):
                     to_delete.append(i)
-
         if to_delete:
             if st.button(f"🗑 Delete selected ({len(to_delete)})", key="del_selected"):
                 st.session_state["bet_slip"] = df.drop(index=to_delete).reset_index(drop=True)
@@ -702,13 +692,11 @@ with tab_betslip:
 
     st.markdown("<br>", unsafe_allow_html=True)
     btn1, btn2, _ = st.columns([1, 1, 8])
-
     with btn1:
         if not st.session_state["bet_slip"].empty:
             csv_data = st.session_state["bet_slip"].to_csv(index=False)
             st.download_button("💾 Save CSV", data=csv_data, file_name="bet_slip.csv",
                                mime="text/csv", key="dl_csv")
-
     with btn2:
         if st.button("🗑 Clear All", key="clear_bets"):
             st.session_state["bet_slip"] = pd.DataFrame(
@@ -717,41 +705,18 @@ with tab_betslip:
             st.rerun()
 
 
-# ════════════════════════════════════════════════════════════════════
-# LOAD MATCH HISTORY
-# ════════════════════════════════════════════════════════════════════
-
-@st.cache_data
-def load_match_df():
-    df = pd.read_csv("player_matches_df.csv")
-    df["match_date"] = pd.to_datetime(df["match_date"]).dt.date
-    return df
-
-try:
-    match_df = load_match_df()
-    _results_available = True
-except FileNotFoundError:
-    match_df = pd.DataFrame()
-    _results_available = False
-
-
-# ════════════════════════════════════════════════════════════════════
-# HELPERS — Results display
-# ════════════════════════════════════════════════════════════════════
+# ────────────────────────────────────────────────────────────────────
+# TAB 5 — Results
+# ────────────────────────────────────────────────────────────────────
 
 def _results_table_html(df_in: pd.DataFrame, color: str) -> str:
-    """Render a styled results table as HTML. Win rows highlighted faintly."""
-    cols = ["match_date", "tournament_name", "round_name", "opposition_name",
-            "player_score", "opposition_score", "player_rating", "oppo_rating",
-            "player_prob", "player_delta", "player_matches_played", "oppo_matches_played"]
     headers = ["DATE", "TOURNAMENT", "ROUND", "OPPONENT",
                "PTS", "OPP PTS", "RATING", "OPP RTG",
                "WIN PROB", "DELTA", "P MATCHES", "O MATCHES"]
-
     head_html = "".join(f"<th>{h}</th>" for h in headers)
     rows_html = ""
     for _, row in df_in.iterrows():
-        won = int(row.get("player_score", 0)) > int(row.get("opposition_score", 0))
+        won = float(row.get("player_score", 0)) > float(row.get("opposition_score", 0))
         bg  = "background:#1a2a1a;" if won else ""
         delta = row.get("player_delta", 0)
         delta_color = "#a5d6a7" if delta > 0 else "#ef9a9a"
@@ -781,7 +746,6 @@ def _results_table_html(df_in: pd.DataFrame, color: str) -> str:
         f"<tbody>{rows_html}</tbody></table>"
     )
 
-
 def _h2h_table_html(df_in: pd.DataFrame, pa: str, color_a: str, color_b: str) -> str:
     headers = ["DATE", "TOURNAMENT", "ROUND", "PLAYER", "PTS", "OPP PTS", "WIN PROB", "DELTA"]
     head_html = "".join(f"<th>{h}</th>" for h in headers)
@@ -789,7 +753,7 @@ def _h2h_table_html(df_in: pd.DataFrame, pa: str, color_a: str, color_b: str) ->
     for _, row in df_in.iterrows():
         is_pa = row["player_name"] == pa
         color = color_a if is_pa else color_b
-        won = int(row.get("player_score", 0)) > int(row.get("opposition_score", 0))
+        won = float(row.get("player_score", 0)) > float(row.get("opposition_score", 0))
         bg  = "background:#1a2a1a;" if won else ""
         delta = row.get("player_delta", 0)
         delta_color = "#a5d6a7" if delta > 0 else "#ef9a9a"
@@ -811,29 +775,19 @@ def _h2h_table_html(df_in: pd.DataFrame, pa: str, color_a: str, color_b: str) ->
         f"<tbody>{rows_html}</tbody></table>"
     )
 
-
 def _rating_chart(df_player: pd.DataFrame, name: str, color: str):
-    """Plotly rating-over-time line chart."""
-    df_sorted = df_player.sort_values("match_date")
-    # Deduplicate by date — take last rating on each date
-    df_sorted = df_sorted.drop_duplicates(subset="match_date", keep="last")
-
+    df_sorted = df_player.sort_values("match_date").drop_duplicates(subset="match_date", keep="last")
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=df_sorted["match_date"],
-        y=df_sorted["player_rating"],
-        mode="lines+markers",
-        name=name,
-        line=dict(color=color, width=2),
-        marker=dict(color=color, size=4),
+        x=df_sorted["match_date"], y=df_sorted["player_rating"],
+        mode="lines+markers", name=name,
+        line=dict(color=color, width=2), marker=dict(color=color, size=4),
         hovertemplate="%{x}<br>Rating: %{y:.1f}<extra></extra>",
     ))
     fig.update_layout(
-        paper_bgcolor="#13131f",
-        plot_bgcolor="#1e1e2e",
+        paper_bgcolor="#13131f", plot_bgcolor="#1e1e2e",
         font=dict(family="IBM Plex Mono", color="#888888", size=11),
-        margin=dict(l=40, r=20, t=30, b=40),
-        height=220,
+        margin=dict(l=40, r=20, t=30, b=40), height=220,
         xaxis=dict(gridcolor="#2a2a3a", showgrid=True, zeroline=False),
         yaxis=dict(gridcolor="#2a2a3a", showgrid=True, zeroline=False),
         showlegend=False,
@@ -841,97 +795,176 @@ def _rating_chart(df_player: pd.DataFrame, name: str, color: str):
     )
     return fig
 
-
-# ════════════════════════════════════════════════════════════════════
-# TAB 5 — Results
-# ════════════════════════════════════════════════════════════════════
-
 with tab_results:
     if not _results_available:
-        st.markdown(
-            "<div class='match-info'>player_matches_df.csv not found in app directory.</div>",
-            unsafe_allow_html=True)
+        st.markdown("<div class='match-info'>player_matches_df.csv not found in app directory.</div>", unsafe_allow_html=True)
     elif "players" not in st.session_state:
-        st.markdown(
-            "<div class='match-info'>Run a prediction first to select players.</div>",
-            unsafe_allow_html=True)
+        st.markdown("<div class='match-info'>Run a prediction first to select players.</div>", unsafe_allow_html=True)
     else:
         pa, pb = st.session_state["players"]
-
-        # N results slider — outside sub-tabs so it applies to both player views
         n_results = st.slider("Last N results", min_value=5, max_value=100, value=20, step=5, key="n_results")
-
         sub_pa, sub_pb, sub_h2h = st.tabs([f"👤  {pa}", f"👤  {pb}", "⚔️  H2H"])
 
-        # ── Player A sub-tab ──────────────────────────────────────
         with sub_pa:
             df_a = match_df[match_df["player_name"] == pa].sort_values("match_date", ascending=False)
             if df_a.empty:
                 st.markdown(f"<div class='match-info'>No results found for {pa}.</div>", unsafe_allow_html=True)
             else:
-                # Rating chart — full history
                 st.plotly_chart(_rating_chart(df_a, pa, "#4fc3f7"), use_container_width=True, config={"displayModeBar": False})
-
-                # Recent N results table
                 df_a_recent = df_a.head(n_results)
-                st.markdown(
-                    f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-bottom:6px;'>"
-                    f"LAST {len(df_a_recent)} RESULTS</div>",
-                    unsafe_allow_html=True)
+                st.markdown(f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-bottom:6px;'>LAST {len(df_a_recent)} RESULTS</div>", unsafe_allow_html=True)
                 st.markdown(_results_table_html(df_a_recent, "#ef9a9a"), unsafe_allow_html=True)
 
-        # ── Player B sub-tab ──────────────────────────────────────
         with sub_pb:
             df_b = match_df[match_df["player_name"] == pb].sort_values("match_date", ascending=False)
             if df_b.empty:
                 st.markdown(f"<div class='match-info'>No results found for {pb}.</div>", unsafe_allow_html=True)
             else:
                 st.plotly_chart(_rating_chart(df_b, pb, "#ef9a9a"), use_container_width=True, config={"displayModeBar": False})
-
                 df_b_recent = df_b.head(n_results)
-                st.markdown(
-                    f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-bottom:6px;'>"
-                    f"LAST {len(df_b_recent)} RESULTS</div>",
-                    unsafe_allow_html=True)
+                st.markdown(f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-bottom:6px;'>LAST {len(df_b_recent)} RESULTS</div>", unsafe_allow_html=True)
                 st.markdown(_results_table_html(df_b_recent, "#4fc3f7"), unsafe_allow_html=True)
 
-        # ── H2H sub-tab ───────────────────────────────────────────
         with sub_h2h:
-            # All rows where pa played pb (from either perspective)
             h2h_df = match_df[
                 ((match_df["player_name"] == pa) & (match_df["opposition_name"] == pb)) |
                 ((match_df["player_name"] == pb) & (match_df["opposition_name"] == pa))
             ].copy().sort_values("match_date", ascending=False)
 
             if h2h_df.empty:
-                st.markdown(
-                    f"<div class='match-info'>No head-to-head results found for {pa} vs {pb}.</div>",
-                    unsafe_allow_html=True)
+                st.markdown(f"<div class='match-info'>No head-to-head results found for {pa} vs {pb}.</div>", unsafe_allow_html=True)
             else:
-                # Summary — wins for each player (from their own rows where they won)
-                wins_a = ((h2h_df["player_name"] == pa) &
-                          (h2h_df["player_score"] > h2h_df["opposition_score"])).sum()
-                wins_b = ((h2h_df["player_name"] == pb) &
-                          (h2h_df["player_score"] > h2h_df["opposition_score"])).sum()
-                total_matches = len(h2h_df) // 2  # two rows per match
-
+                wins_a = ((h2h_df["player_name"] == pa) & (h2h_df["player_score"] > h2h_df["opposition_score"])).sum()
+                wins_b = ((h2h_df["player_name"] == pb) & (h2h_df["player_score"] > h2h_df["opposition_score"])).sum()
+                total_matches = len(h2h_df) // 2
                 st.markdown(
                     f"<div style='display:flex;gap:24px;align-items:center;margin-bottom:16px;'>"
                     f"<div style='background:#1e1e2e;border:2px solid #4fc3f7;border-radius:8px;padding:14px 24px;text-align:center;'>"
                     f"<div style='font-size:9px;letter-spacing:2px;color:#444455;font-family:monospace;margin-bottom:4px;'>WINS</div>"
                     f"<div style='font-size:36px;font-weight:700;color:#4fc3f7;font-family:Rajdhani,sans-serif;'>{wins_a}</div>"
-                    f"<div style='font-size:13px;color:#4fc3f7;font-family:Rajdhani,sans-serif;'>{pa}</div>"
-                    f"</div>"
+                    f"<div style='font-size:13px;color:#4fc3f7;font-family:Rajdhani,sans-serif;'>{pa}</div></div>"
                     f"<div style='font-size:22px;color:#444455;font-family:Rajdhani,sans-serif;font-weight:700;'>vs</div>"
                     f"<div style='background:#1e1e2e;border:2px solid #ef9a9a;border-radius:8px;padding:14px 24px;text-align:center;'>"
                     f"<div style='font-size:9px;letter-spacing:2px;color:#444455;font-family:monospace;margin-bottom:4px;'>WINS</div>"
                     f"<div style='font-size:36px;font-weight:700;color:#ef9a9a;font-family:Rajdhani,sans-serif;'>{wins_b}</div>"
-                    f"<div style='font-size:13px;color:#ef9a9a;font-family:Rajdhani,sans-serif;'>{pb}</div>"
-                    f"</div>"
+                    f"<div style='font-size:13px;color:#ef9a9a;font-family:Rajdhani,sans-serif;'>{pb}</div></div>"
                     f"<div style='font-size:11px;color:#444455;font-family:monospace;'>{total_matches} matches</div>"
                     f"</div>",
                     unsafe_allow_html=True)
+                st.markdown(_h2h_table_html(h2h_df.head(n_results * 2), pa, "#4fc3f7", "#ef9a9a"), unsafe_allow_html=True)
 
-                # Show last N (both rows per match, but grouped by match_id naturally via sort)
-                h2h_recent = h2h_df.head(n_results * 2)
-                st.markdown(_h2h_table_html(h2h_recent, pa, "#4fc3f7", "#ef9a9a"), unsafe_allow_html=True)
+
+# ────────────────────────────────────────────────────────────────────
+# TAB 6 — Rankings
+# ────────────────────────────────────────────────────────────────────
+
+def _rankings_bar(value: float, max_val: float, color: str, width_px: int = 120) -> str:
+    """Inline mini bar for ratings column."""
+    pct = min(int((value / max_val) * 100), 100) if max_val > 0 else 0
+    bar_w = int(width_px * pct / 100)
+    return (
+        f"<div style='display:flex;align-items:center;gap:8px;'>"
+        f"<div style='background:#12121e;border-radius:3px;height:8px;width:{width_px}px;flex-shrink:0;'>"
+        f"<div style='background:{color};border-radius:3px;height:8px;width:{bar_w}px;'></div></div>"
+        f"<span style='color:{color};font-weight:700;font-size:13px;'>{value:.1f}</span>"
+        f"</div>"
+    )
+
+def _cen_bar(value: float, color: str, width_px: int = 100) -> str:
+    """Inline mini bar for century rate column (0–100% scale)."""
+    bar_w = int(width_px * value)
+    return (
+        f"<div style='display:flex;align-items:center;gap:8px;'>"
+        f"<div style='background:#12121e;border-radius:3px;height:8px;width:{width_px}px;flex-shrink:0;'>"
+        f"<div style='background:{color};border-radius:3px;height:8px;width:{bar_w}px;'></div></div>"
+        f"<span style='color:{color};font-weight:700;font-size:13px;'>{value*100:.1f}%</span>"
+        f"</div>"
+    )
+
+with tab_rankings:
+    rc1, rc2 = st.columns(2)
+    with rc1:
+        top_n = st.slider("Top N players", min_value=5, max_value=300, value=32, step=1, key="rank_n")
+    with rc2:
+        min_matches = st.slider("Min matches played", min_value=0, max_value=500, value=100, step=10, key="rank_min")
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # Build rankings dataframe from ratings_elob + player_rates
+    rank_rows = []
+    for player, info in ratings_elob.items():
+        mp = info.get("matches_played", 0)
+        if mp < min_matches:
+            continue
+        rating = info.get("rating", 0)
+        cen_wf = player_rates.get(player, None)
+        # Skip NaN century rates — show as None
+        if cen_wf is not None and (math.isnan(cen_wf) if isinstance(cen_wf, float) else False):
+            cen_wf = None
+        rank_rows.append({
+            "player": player,
+            "matches": mp,
+            "elob": rating,
+            "cen_wf": cen_wf if cen_wf is not None else 0.0,
+            "cen_wf_valid": cen_wf is not None,
+        })
+
+    rank_df = pd.DataFrame(rank_rows).sort_values("elob", ascending=False).reset_index(drop=True)
+    rank_df = rank_df.head(top_n)
+
+    if rank_df.empty:
+        st.markdown(
+            "<div class='match-info'>No players meet the minimum matches filter.</div>",
+            unsafe_allow_html=True)
+    else:
+        max_elob = rank_df["elob"].max()
+
+        # Summary strip
+        st.markdown(
+            f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-bottom:12px;'>"
+            f"Showing top {len(rank_df)} players &nbsp;·&nbsp; min {min_matches} matches played"
+            f"</div>",
+            unsafe_allow_html=True)
+
+        # Build table HTML
+        head = (
+            "<table class='rank-table'><thead><tr>"
+            "<th style='width:36px;'>#</th>"
+            "<th>PLAYER</th>"
+            "<th class='num' style='width:90px;'>MATCHES</th>"
+            "<th style='width:260px;'>ELO BETA</th>"
+            "<th style='width:200px;'>CEN WF</th>"
+            "</tr></thead><tbody>"
+        )
+
+        rows_html = ""
+        for i, row in rank_df.iterrows():
+            rank_num = i + 1
+            # Rank badge colour: gold/silver/bronze for top 3
+            if rank_num == 1:
+                rank_color = "#ffd700"
+            elif rank_num == 2:
+                rank_color = "#c0c0c0"
+            elif rank_num == 3:
+                rank_color = "#cd7f32"
+            else:
+                rank_color = "#444455"
+
+            matches_style = "color:#ef5350;font-weight:700;" if row["matches"] < 50 else "color:#888888;"
+
+            elob_bar = _rankings_bar(row["elob"], max_elob, "#4fc3f7")
+            cen_bar  = _cen_bar(row["cen_wf"], "#b39ddb") if row["cen_wf_valid"] and row["cen_wf"] > 0 else (
+                "<span style='color:#444455;font-size:11px;'>—</span>"
+            )
+
+            rows_html += (
+                f"<tr>"
+                f"<td style='color:{rank_color};font-weight:700;font-size:13px;text-align:right;padding-right:12px;'>{rank_num}</td>"
+                f"<td style='color:#ffffff;font-weight:600;font-family:Rajdhani,sans-serif;font-size:15px;'>{row['player']}</td>"
+                f"<td style='text-align:right;{matches_style}'>{row['matches']}</td>"
+                f"<td>{elob_bar}</td>"
+                f"<td>{cen_bar}</td>"
+                f"</tr>"
+            )
+
+        st.markdown(head + rows_html + "</tbody></table>", unsafe_allow_html=True)
