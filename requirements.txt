@@ -3,3 +3,8 @@ scipy
 plotly
 pyarrow
 xlrd
+requests
+beautifulsoup4
+lxml
+pyarrow
+PyGithub
