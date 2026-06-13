@@ -4,7 +4,6 @@ from bs4 import BeautifulSoup
 import re
 import pandas as pd
 import numpy as np
-from IPython.display import display
 
 def extract_score_and_break(score_str):
     """
