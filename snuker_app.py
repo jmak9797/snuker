@@ -1,10 +1,38 @@
+import io
 import json
 import math
+import gc
+import base64
+from datetime import datetime
+
 import numpy as np
 import pandas as pd
 import streamlit as st
 from scipy.stats import binom
 import plotly.graph_objects as go
+
+# ── Optional deps for the Update tab ─────────────────────────────────
+# Scraper (network + parsing). Guarded so the serving app still loads
+# even if these aren't installed in some environment.
+try:
+    import requests
+    from bs4 import BeautifulSoup
+    import scraper_functions as sf
+    _SCRAPER_AVAILABLE = True
+    _SCRAPER_ERR = None
+except Exception as e:                       # pragma: no cover
+    _SCRAPER_AVAILABLE = False
+    _SCRAPER_ERR = repr(e)
+
+# GitHub commit layer
+try:
+    from github import Github, InputGitTreeElement
+    _GITHUB_AVAILABLE = True
+    _GITHUB_ERR = None
+except Exception as e:                       # pragma: no cover
+    _GITHUB_AVAILABLE = False
+    _GITHUB_ERR = repr(e)
+
 
 # ── Page config ──────────────────────────────────────────────────────
 st.set_page_config(page_title="Match Predictor", page_icon="🎱", layout="wide")
@@ -32,6 +60,7 @@ st.markdown("""
     .card-a { background-color: #1e1e2e; border: 2px solid #4fc3f7; border-radius: 10px; padding: 20px; }
     .card-b { background-color: #1e1e2e; border: 2px solid #ef9a9a; border-radius: 10px; padding: 20px; }
     .card-match { background-color: #1e1e2e; border: 2px solid #b39ddb; border-radius: 10px; padding: 20px; }
+    .card-upd { background-color: #1e1e2e; border: 2px solid #2a2a3a; border-radius: 10px; padding: 20px; }
     .prob-bar-bg { background-color: #12121e; border-radius: 6px; height: 14px; width: 100%; margin: 8px 0 16px 0; }
     .prob-bar-fill-a { background-color: #4fc3f7; border-radius: 6px; height: 14px; }
     .prob-bar-fill-b { background-color: #ef9a9a; border-radius: 6px; height: 14px; }
@@ -63,9 +92,24 @@ st.markdown("""
     .rank-table td { padding: 9px 16px; border-bottom: 1px solid #1a1a2a; vertical-align: middle; }
     .rank-table tr:last-child td { border-bottom: none; }
     .rank-table tr:hover td { background-color: #1a1a2a; }
+    .upd-step { font-size: 11px; letter-spacing: 2px; color: #4fc3f7; font-family: 'IBM Plex Mono', monospace; margin: 4px 0; }
     div[data-testid="stHorizontalBlock"] { gap: 16px; }
 </style>
 """, unsafe_allow_html=True)
+
+
+# ════════════════════════════════════════════════════════════════════
+# FILE / REPO CONSTANTS
+# ════════════════════════════════════════════════════════════════════
+
+PARQUET_PATH      = "match_frame_player_data.parq"   # master frame-level dataset
+RATINGS_PATH      = "ratings.json"                   # {"elob": ..., "elof": ...}
+PLAYER_RATES_PATH = "player_rates.json"              # century rates
+MATCHES_CSV_PATH  = "player_matches_df.csv"          # historical results + preds
+
+# Columns used to preview newly-scraped matches
+MATCH_COLS = ["match_date", "tournament_name", "player_name",
+              "opposition_name", "player_score", "opposition_score"]
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -156,7 +200,7 @@ def collapse_dist(dist: dict, threshold: float = 0.02) -> list:
 
 
 # ════════════════════════════════════════════════════════════════════
-# MODEL FUNCTIONS — Match prediction
+# MODEL FUNCTIONS — Match prediction (serving)
 # ════════════════════════════════════════════════════════════════════
 
 def elo_expected_frame(r_a, r_b):
@@ -231,7 +275,7 @@ def handicap_prob_p2(scorelines, handicap):
 
 
 # ════════════════════════════════════════════════════════════════════
-# MODEL FUNCTIONS — Century prediction
+# MODEL FUNCTIONS — Century prediction (serving)
 # ════════════════════════════════════════════════════════════════════
 
 def _match_scoreline_df(prob_a, first_to):
@@ -288,23 +332,517 @@ def over_under(result, selection, line):
 
 
 # ════════════════════════════════════════════════════════════════════
-# LOAD DATA
+# DATA PIPELINE — scraping  (mirrors update_data.ipynb)
+# ════════════════════════════════════════════════════════════════════
+# NOTE: these orchestration functions are reproduced here from your
+# update_data notebook, because scraper_functions.py only exposes the
+# low-level parsers (get_frame_level_data etc.). The low-level parsing
+# is still delegated to scraper_functions.get_frame_level_data.
+
+def get_tournament_urls(seasons: list):
+    url_base = (lambda season: f"https://cuetracker.net/seasons/{str(season-1)}-{str(season)}")
+    tourn_links = []
+    for season in seasons:
+        response = requests.get(url_base(season))
+        soup = BeautifulSoup(response.content, "html.parser")
+        table = soup.find("table", class_="table-striped")
+        _tmp = [a["href"] for a in table.find("tbody").find_all("a") if "tournaments" in a["href"]]
+        tourn_links.extend(_tmp)
+    return tourn_links
+
+
+def get_tournament_info(soup):
+    name = soup.find("h1", class_="text-center").text.strip()
+    info_table = soup.find("table", class_="table-small")
+    status = None
+    location = None
+    for row in info_table.find_all("tr"):
+        cells = row.find_all("td")
+        if len(cells) >= 2:
+            label = cells[0].text.strip()
+            if "Status" in label:
+                status = cells[1].text.strip()
+            elif "Location" in label:
+                location = ", ".join(a.text.strip() for a in cells[1].find_all("a"))
+    return {"name": name, "status": status, "location": location}
+
+
+def get_tournament_matches(tourn_links, progress_cb=None):
+    full_data = []
+    for tourn in tourn_links:
+        if progress_cb:
+            progress_cb(f"  · {tourn}")
+        response = requests.get(tourn)
+        soup = BeautifulSoup(response.content, "html.parser")
+        tourn_data = get_tournament_info(soup)
+        data = sf.get_frame_level_data(soup)
+        if "match_date" not in data.columns:
+            if progress_cb:
+                progress_cb("    skipped (no match_date)")
+            continue
+        data["tournament_name"] = tourn_data.get("name")
+        data["status"] = tourn_data.get("status")
+        data["location"] = tourn_data.get("location")
+        full_data.append(data)
+    full_data = pd.concat(full_data)
+    full_data[["match_id", "frame_number"]] = full_data[["match_id", "frame_number"]].astype(int)
+    return full_data.sort_values(["match_date", "match_id", "frame_number"]).reset_index(drop=True)
+
+
+def _add_extra_details(df):
+    cols = ["player_1_score", "player_2_score", "best_of",
+            "player_1_frame_score", "player_2_frame_score"]
+    df[cols] = df[cols].astype(float)
+    df["player_1_match_win"] = np.select(
+        [df.player_1_score > df.player_2_score, df.player_1_score < df.player_2_score,
+         df.player_1_score == df.player_2_score], [1, 0, 0.5], np.nan)
+    df["player_2_match_win"] = np.select(
+        [df.player_1_score > df.player_2_score, df.player_1_score < df.player_2_score,
+         df.player_1_score == df.player_2_score], [0, 1, 0.5], np.nan)
+    df["player_1_frame_win"] = df.player_1_frame_score > df.player_2_frame_score
+    df["player_2_frame_win"] = df.player_2_frame_score > df.player_1_frame_score
+    df["player_1_cen"] = df.player_1_50_break >= 100
+    df["player_2_cen"] = df.player_2_50_break >= 100
+    df["player_1_pre_frame_score"] = df.groupby("match_id").player_1_frame_win.transform("cumsum") - df.player_1_frame_win
+    df["player_2_pre_frame_score"] = df.groupby("match_id").player_2_frame_win.transform("cumsum") - df.player_2_frame_win
+    return df
+
+
+def match_frame_to_player_level(df):
+    p1_cols = [c for c in df.columns if c.startswith("player_1_")]
+    p2_cols = [c for c in df.columns if c.startswith("player_2_")]
+    context_cols = [c for c in df.columns if c not in p1_cols + p2_cols]
+
+    def build_perspective(df, player_prefix, opposition_prefix):
+        player_cols = [c for c in df.columns if c.startswith(player_prefix)]
+        oppo_cols   = [c for c in df.columns if c.startswith(opposition_prefix)]
+        out = df[context_cols].copy()
+        for col in player_cols:
+            out[col.replace(player_prefix, "player_")] = df[col]
+        for col in oppo_cols:
+            out[col.replace(opposition_prefix, "opposition_")] = df[col]
+        return out
+
+    p1 = build_perspective(df, "player_1_", "player_2_")
+    p2 = build_perspective(df, "player_2_", "player_1_")
+    return (pd.concat([p1, p2])
+            .sort_values(["match_id", "frame_number"])
+            .reset_index(drop=True))
+
+
+def load_all_snooker_data(seasons, progress_cb=None):
+    """
+    Prefer the real scraper_functions.load_all_snooker_data if your module
+    defines it; otherwise rebuild it from the notebook orchestration above.
+    """
+    if _SCRAPER_AVAILABLE and hasattr(sf, "load_all_snooker_data"):
+        try:
+            return sf.load_all_snooker_data(seasons)
+        except TypeError:
+            return sf.load_all_snooker_data(seasons=seasons)
+    if progress_cb:
+        progress_cb("Fetching tournament URLs…")
+    links = get_tournament_urls(seasons)
+    if progress_cb:
+        progress_cb(f"{len(links)} tournaments found. Scraping match pages…")
+    data = get_tournament_matches(links, progress_cb=progress_cb)
+    data = _add_extra_details(data)
+    return data
+
+
+def scrape_and_diff(seasons, progress_cb=None):
+    """Scrape, merge with master parquet, return (combined_df, new_match_ids, preview_df)."""
+    def log(m):
+        if progress_cb:
+            progress_cb(m)
+
+    data = load_all_snooker_data(seasons, progress_cb=progress_cb)
+    log(f"Scraped {len(data):,} frame rows. Reshaping to player level…")
+    player_df = match_frame_to_player_level(data)
+
+    log("Loading existing master dataset…")
+    output = pd.read_parquet(PARQUET_PATH)
+    existing_matches = output[output.match_date > "2026-01-01"].match_id.unique()
+
+    combined = (
+        pd.concat([output, player_df])
+        .drop_duplicates(["match_id", "player_name", "frame_number"], keep="last")
+    )
+    output_matches = combined[combined.match_date > "2026-01-01"].match_id.unique()
+    new_matches = [m for m in output_matches if m not in existing_matches]
+
+    preview = (
+        combined[combined.match_id.isin(new_matches)][["match_id"] + MATCH_COLS]
+        .drop_duplicates("match_id")
+        .reset_index(drop=True)
+    )
+    log(f"{len(new_matches)} new match(es) vs the saved dataset.")
+    return combined, new_matches, preview
+
+
+# ════════════════════════════════════════════════════════════════════
+# DATA PIPELINE — ELO models  (mirrors match_models_update.ipynb)
+# ════════════════════════════════════════════════════════════════════
+
+def _prepare_frame_df(df):
+    df = df[
+        ~df.tournament_name.astype(str).str.contains("Shoot")
+        & ~df.tournament_name.astype(str).str.contains("6-Reds")
+        & (df.match_date.astype(str) != "0000-00-00")
+    ].copy()
+    df["match_date"] = pd.to_datetime(df["match_date"].astype(str).str.split(" - ").str[0].str.strip())
+    df["best_of"] = df["best_of"].astype(int)
+    return df
+
+
+def mov_multiplier(frames_won, frames_lost, elo_diff):
+    margin = frames_won - frames_lost
+    log_margin = math.log(margin + 1)
+    autocorr = 2.2 / (elo_diff * 0.001 + 2.2)
+    return log_margin * autocorr
+
+
+def calculate_k_weight(tournament_name: str):
+    if "Championship League" in tournament_name:
+        return 0.75
+    elif "Q School" in tournament_name:
+        return 0.25
+    return 1
+
+
+def run_elo_beta(df, k=14, initial_rating=0.01, k_decay=0.02):
+    df = df.copy()
+    df["match_date"] = pd.to_datetime(df["match_date"])
+    match_cols = [
+        "match_id", "match_date", "best_of", "tournament_name",
+        "player_name", "opposition_name",
+        "player_score", "opposition_score",
+        "player_match_win", "opposition_match_win",
+    ]
+    matches = (
+        df[match_cols]
+        .drop_duplicates(subset=["match_id", "player_name"])
+        .sort_values("match_date")
+        .reset_index(drop=True)
+    )
+    ratings, match_counts, records = {}, {}, []
+
+    for match_id, grp in matches.groupby("match_id", sort=False):
+        if len(grp) != 2:
+            continue
+        row1, row2 = grp.iloc[0], grp.iloc[1]
+        p1, p2 = row1["player_name"], row2["player_name"]
+        r1 = ratings.get(p1, initial_rating)
+        r2 = ratings.get(p2, initial_rating)
+        n1 = match_counts.get(p1, 0)
+        n2 = match_counts.get(p2, 0)
+
+        tourn_k_weight = calculate_k_weight(tournament_name=row1["tournament_name"])
+        k1 = k * (1 / (1 + k_decay * n1)) * tourn_k_weight
+        k2 = k * (1 / (1 + k_decay * n2)) * tourn_k_weight
+
+        match_counts[p1] = n1 + 1
+        match_counts[p2] = n2 + 1
+
+        p_frame_1 = elo_expected_frame(r1, r2)
+        p_frame_2 = 1 - p_frame_1
+
+        best_of = row1["best_of"]
+        prob1 = p_win_match(p_frame_1, best_of)
+        prob2 = 1 - prob1
+
+        frames_won_1 = float(row1["player_score"])
+        frames_won_2 = float(row2["player_score"])
+        outcome1 = float(row1["player_match_win"])
+        outcome2 = float(row2["player_match_win"])
+
+        if outcome1 == 1:
+            winner_elo_diff = r1 - r2
+            mov = mov_multiplier(frames_won_1, frames_won_2, winner_elo_diff)
+        else:
+            winner_elo_diff = r2 - r1
+            mov = mov_multiplier(frames_won_2, frames_won_1, winner_elo_diff)
+
+        delta1 = k1 * mov * (outcome1 - prob1)
+        delta2 = k2 * mov * (outcome2 - prob2)
+
+        records.append({
+            "match_id": match_id, "player_name": p1,
+            "player_rating": round(r1, 2), "oppo_rating": round(r2, 2),
+            "player_prob": round(prob1, 4), "oppo_prob": round(prob2, 4),
+            "player_delta": round(delta1, 4), "oppo_delta": round(delta2, 4),
+            "player_k": round(k1, 4), "oppo_k": round(k2, 4),
+            "player_mov": round(mov, 4),
+            "player_matches_played": n1, "oppo_matches_played": n2,
+        })
+        records.append({
+            "match_id": match_id, "player_name": p2,
+            "player_rating": round(r2, 2), "oppo_rating": round(r1, 2),
+            "player_prob": round(prob2, 4), "oppo_prob": round(prob1, 4),
+            "player_delta": round(delta2, 4), "oppo_delta": round(delta1, 4),
+            "player_k": round(k2, 4), "oppo_k": round(k1, 4),
+            "player_mov": round(mov, 4),
+            "player_matches_played": n2, "oppo_matches_played": n1,
+        })
+        ratings[p1] = r1 + delta1
+        ratings[p2] = r2 + delta2
+
+    elo_df = pd.DataFrame(records)
+    df_out = df.merge(
+        elo_df[["match_id", "player_name",
+                "player_rating", "oppo_rating",
+                "player_prob", "oppo_prob",
+                "player_delta", "oppo_delta",
+                "player_k", "oppo_k", "player_mov",
+                "player_matches_played", "oppo_matches_played"]],
+        on=["match_id", "player_name"], how="left",
+    )
+    final_ratings = {
+        player: {"rating": round(ratings[player], 2),
+                 "matches_played": match_counts.get(player, 0)}
+        for player in ratings
+    }
+    return df_out, final_ratings
+
+
+def run_elo_frames(df, k=16, initial_rating=0):
+    df = df.copy()
+    df["match_date"] = pd.to_datetime(df["match_date"])
+    match_cols = [
+        "match_id", "match_date", "best_of", "tournament_name",
+        "player_name", "opposition_name",
+        "player_score", "opposition_score",
+        "player_match_win", "opposition_match_win",
+    ]
+    matches = (
+        df[match_cols]
+        .drop_duplicates(subset=["match_id", "player_name"])
+        .sort_values("match_date")
+        .reset_index(drop=True)
+    )
+    ratings, match_counts, records = {}, {}, []
+
+    for match_id, grp in matches.groupby("match_id", sort=False):
+        if len(grp) != 2:
+            continue
+        row1, row2 = grp.iloc[0], grp.iloc[1]
+        p1, p2 = row1["player_name"], row2["player_name"]
+        r1 = ratings.get(p1, initial_rating)
+        r2 = ratings.get(p2, initial_rating)
+
+        match_counts[p1] = match_counts.get(p1, 0) + 1
+        match_counts[p2] = match_counts.get(p2, 0) + 1
+
+        exp_frame_1 = elo_expected_frame(r1, r2)
+        exp_frame_2 = 1 - exp_frame_1
+
+        best_of = row1["best_of"]
+        prob1 = p_win_match(exp_frame_1, best_of)
+        prob2 = 1 - prob1
+
+        frames_p1 = float(row1["player_score"])
+        frames_p2 = float(row2["player_score"])
+        total_frames = frames_p1 + frames_p2
+        if total_frames > 0:
+            ratio1 = frames_p1 / total_frames
+            ratio2 = frames_p2 / total_frames
+        else:
+            ratio1 = ratio2 = 0.5
+
+        tourn_k_weight = calculate_k_weight(tournament_name=row1["tournament_name"])
+        delta1 = k * (ratio1 - exp_frame_1) * tourn_k_weight
+        delta2 = k * (ratio2 - exp_frame_2) * tourn_k_weight
+
+        records.append({
+            "match_id": match_id, "player_name": p1,
+            "player_rating": round(r1, 2), "oppo_rating": round(r2, 2),
+            "player_prob": round(prob1, 4), "oppo_prob": round(prob2, 4),
+            "player_delta": round(delta1, 4), "oppo_delta": round(delta2, 4),
+            "player_matches_played": match_counts[p1] - 1,
+            "oppo_matches_played": match_counts[p2] - 1,
+        })
+        records.append({
+            "match_id": match_id, "player_name": p2,
+            "player_rating": round(r2, 2), "oppo_rating": round(r1, 2),
+            "player_prob": round(prob2, 4), "oppo_prob": round(prob1, 4),
+            "player_delta": round(delta2, 4), "oppo_delta": round(delta1, 4),
+            "player_matches_played": match_counts[p2] - 1,
+            "oppo_matches_played": match_counts[p1] - 1,
+        })
+        ratings[p1] = r1 + delta1
+        ratings[p2] = r2 + delta2
+
+    elo_df = pd.DataFrame(records)
+    df_out = df.merge(
+        elo_df[["match_id", "player_name",
+                "player_rating", "oppo_rating",
+                "player_prob", "oppo_prob",
+                "player_delta", "oppo_delta",
+                "player_matches_played", "oppo_matches_played"]],
+        on=["match_id", "player_name"], how="left",
+    )
+    final_ratings = {
+        player: {"rating": round(ratings[player], 2),
+                 "matches_played": match_counts.get(player, 0)}
+        for player in ratings
+    }
+    return df_out, final_ratings
+
+
+# ════════════════════════════════════════════════════════════════════
+# DATA PIPELINE — Century rates  (mirrors century_functions.ipynb)
+# ════════════════════════════════════════════════════════════════════
+
+def add_dw_century_rate(df, halflife=220):
+    """
+    Downweighted (time-decayed) average century-making probability per player,
+    given a frame win, with partial credit for near-centuries.
+
+    Vectorized equivalent of the notebook's per-group calc_dw, written to be
+    independent of the pandas groupby.apply behaviour (which differs between
+    pandas <2.2 and >=3.0).
+    """
+    df = df.copy()
+    df["match_date"] = pd.to_datetime(df["match_date"])
+    df["cen_wf"] = np.select(
+        [
+            (df.player_frame_score <= df.opposition_frame_score),
+            (df.player_frame_score > df.opposition_frame_score) & (df.player_50_break >= 100),
+            (df.player_frame_score > df.opposition_frame_score) & (df.player_50_break.between(95, 100, inclusive="left")),
+            (df.player_frame_score > df.opposition_frame_score) & (df.player_50_break.between(90, 95, inclusive="left")),
+            (df.player_frame_score > df.opposition_frame_score) & (df.player_50_break.between(85, 90, inclusive="left")),
+        ],
+        [np.nan, 1, 0.20, 0.125, 0.05],
+        default=0,
+    )
+    decay = np.log(2) / halflife
+
+    # Only frames the player won contribute (cen_wf not NaN)
+    sub = df.dropna(subset=["cen_wf"]).copy()
+    if sub.empty:
+        df["dw_cen_rate"] = np.nan
+        return df, {p: np.nan for p in df["player_name"].unique()}
+
+    # Days measured from each player's most recent contributing frame
+    sub["_max_date"] = sub.groupby("player_name")["match_date"].transform("max")
+    sub["_days_ago"] = (sub["_max_date"] - sub["match_date"]).dt.days
+    sub["_w"] = np.exp(-decay * sub["_days_ago"])
+    sub["_wx"] = sub["cen_wf"] * sub["_w"]
+
+    agg = sub.groupby("player_name").agg(_num=("_wx", "sum"), _den=("_w", "sum"))
+    rates = (agg["_num"] / agg["_den"])
+    player_rates = rates.to_dict()
+
+    # Players with no contributing frames (all NaN) -> NaN, matching original
+    for p in df["player_name"].unique():
+        player_rates.setdefault(p, np.nan)
+
+    df["dw_cen_rate"] = df["player_name"].map(player_rates)
+    return df, player_rates
+
+
+# ════════════════════════════════════════════════════════════════════
+# DATA PIPELINE — orchestrator + GitHub commit
+# ════════════════════════════════════════════════════════════════════
+
+def run_models_pipeline(df_frames, elob_k=14, elof_k=16, halflife=220, progress_cb=None):
+    """Run both ELO models + the centuries model. Returns the three artifacts."""
+    def log(m):
+        if progress_cb:
+            progress_cb(m)
+
+    log("Preparing frame-level data…")
+    df = _prepare_frame_df(df_frames)
+
+    log("Running ELO-beta (match-outcome model)…")
+    df_elob, final_ratings_elob = run_elo_beta(df.copy(), k=elob_k)
+
+    log("Running ELO-frames model…")
+    _df_elof, final_ratings_elof = run_elo_frames(df.copy(), k=elof_k)
+    del _df_elof
+    gc.collect()
+
+    log("Building results table (player_matches_df)…")
+    df_elob["player_century"] = df_elob.player_50_break >= 100
+    df_elob["oppo_century"] = df_elob.opposition_50_break >= 100
+    df_elob["player_centuries"] = df_elob.groupby(["match_id", "player_name"]).player_century.transform("sum")
+    df_elob["oppo_centuries"] = df_elob.groupby(["match_id", "player_name"]).oppo_century.transform("sum")
+    matches_df = (
+        df_elob[[
+            "match_id", "round_name", "best_of", "match_date",
+            "tournament_name", "player_name", "player_score",
+            "opposition_name", "opposition_score", "player_rating",
+            "oppo_rating", "player_prob", "oppo_prob", "player_delta",
+            "player_matches_played", "oppo_matches_played",
+            "player_centuries", "oppo_centuries",
+        ]]
+        .drop_duplicates(["match_id", "player_name"])
+        .reset_index(drop=True)
+    )
+    del df_elob
+    gc.collect()
+
+    log("Running centuries model…")
+    _, player_rates = add_dw_century_rate(df, halflife=halflife)
+
+    ratings_obj = {"elob": final_ratings_elob, "elof": final_ratings_elof}
+    log("Models complete.")
+    return ratings_obj, player_rates, matches_df
+
+
+def _gh_config():
+    """Returns (token, repo, branch) from st.secrets, or (None, None, None)."""
+    try:
+        gh = st.secrets["github"]
+        return gh["token"], gh["repo"], gh.get("branch", "main")
+    except Exception:
+        return None, None, None
+
+
+def commit_files_to_github(token, repo_name, branch, files: dict, message: str):
+    """
+    Commit multiple files in a single commit via the Git Data API.
+    `files` maps repo-relative path -> bytes (binary) or str (text).
+    Returns the new commit SHA.
+    """
+    g = Github(token)
+    repo = g.get_repo(repo_name)
+    ref = repo.get_git_ref(f"heads/{branch}")
+    latest_commit = repo.get_git_commit(ref.object.sha)
+    base_tree = latest_commit.tree
+
+    elements = []
+    for path, content in files.items():
+        if isinstance(content, bytes):
+            blob = repo.create_git_blob(base64.b64encode(content).decode(), "base64")
+        else:
+            blob = repo.create_git_blob(content, "utf-8")
+        elements.append(InputGitTreeElement(path=path, mode="100644", type="blob", sha=blob.sha))
+
+    new_tree = repo.create_git_tree(elements, base_tree)
+    new_commit = repo.create_git_commit(message, new_tree, [latest_commit])
+    ref.edit(new_commit.sha)
+    return new_commit.sha
+
+
+# ════════════════════════════════════════════════════════════════════
+# LOAD DATA (serving)
 # ════════════════════════════════════════════════════════════════════
 
 @st.cache_data
 def load_ratings():
-    with open("ratings.json", encoding="utf-8") as f:
+    with open(RATINGS_PATH, encoding="utf-8") as f:
         data = json.load(f)
     return data["elob"], data["elof"]
 
 @st.cache_data
 def load_player_rates():
-    with open("player_rates.json", encoding="utf-8") as f:
+    with open(PLAYER_RATES_PATH, encoding="utf-8") as f:
         return json.load(f)
 
 @st.cache_data
 def load_match_df():
-    df = pd.read_csv("player_matches_df.csv")
+    df = pd.read_csv(MATCHES_CSV_PATH)
     df["match_date"] = pd.to_datetime(df["match_date"]).dt.date
     return df
 
@@ -365,9 +903,10 @@ if run:
 # TABS
 # ════════════════════════════════════════════════════════════════════
 
-tab_match, tab_handicap, tab_centuries, tab_betslip, tab_results, tab_rankings = st.tabs([
+(tab_match, tab_handicap, tab_centuries, tab_betslip,
+ tab_results, tab_rankings, tab_update) = st.tabs([
     "📊  MATCH ODDS", "↕️  HANDICAPS", "🔴  CENTURIES",
-    "📋  BET SLIP", "📅  RESULTS", "🏆  RANKINGS",
+    "📋  BET SLIP", "📅  RESULTS", "🏆  RANKINGS", "⚙️  UPDATE",
 ])
 
 
@@ -873,7 +1412,6 @@ with tab_rankings:
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Build rankings dataframe from ratings_elob + player_rates
     rank_rows = []
     for player, info in ratings_elob.items():
         mp = info.get("matches_played", 0)
@@ -881,7 +1419,6 @@ with tab_rankings:
             continue
         rating = info.get("rating", 0)
         cen_wf = player_rates.get(player, None)
-        # Skip NaN century rates — show as None
         if cen_wf is not None and (math.isnan(cen_wf) if isinstance(cen_wf, float) else False):
             cen_wf = None
         rank_rows.append({
@@ -902,14 +1439,12 @@ with tab_rankings:
     else:
         max_elob = rank_df["elob"].max()
 
-        # Summary strip
         st.markdown(
             f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-bottom:12px;'>"
             f"Showing top {len(rank_df)} players &nbsp;·&nbsp; min {min_matches} matches played"
             f"</div>",
             unsafe_allow_html=True)
 
-        # Build table HTML
         head = (
             "<table class='rank-table'><thead><tr>"
             "<th style='width:36px;'>#</th>"
@@ -923,7 +1458,6 @@ with tab_rankings:
         rows_html = ""
         for i, row in rank_df.iterrows():
             rank_num = i + 1
-            # Rank badge colour: gold/silver/bronze for top 3
             if rank_num == 1:
                 rank_color = "#ffd700"
             elif rank_num == 2:
@@ -954,3 +1488,206 @@ with tab_rankings:
             )
 
         st.markdown(head + rows_html + "</tbody></table>", unsafe_allow_html=True)
+
+
+# ────────────────────────────────────────────────────────────────────
+# TAB 7 — Update Results  (scrape → save → run models → save)
+# ────────────────────────────────────────────────────────────────────
+
+with tab_update:
+    st.markdown("### ⚙️ Update Results")
+    st.markdown(
+        "<div style='font-size:11px;color:#888888;font-family:monospace;margin-bottom:12px;'>"
+        "Scrape new snooker results, commit them to GitHub, then re-run the models. "
+        "Each save commits to the repo, which automatically reboots the app with fresh data."
+        "</div>", unsafe_allow_html=True)
+
+    token, repo_name, branch = _gh_config()
+
+    # ---- Prerequisite checks -------------------------------------------------
+    issues = []
+    if not _SCRAPER_AVAILABLE:
+        issues.append(f"`scraper_functions.py` / `requests` / `bs4` not importable — {_SCRAPER_ERR}")
+    if not _GITHUB_AVAILABLE:
+        issues.append("`PyGithub` not installed — add `PyGithub` to requirements.txt")
+    if token is None:
+        issues.append("GitHub secrets missing — add a `[github]` block in Streamlit Secrets (token / repo / branch)")
+    import os
+    if not os.path.exists(PARQUET_PATH):
+        issues.append(f"`{PARQUET_PATH}` (master dataset) not found in the repo — commit it once to enable updates")
+
+    if issues:
+        st.markdown(
+            "<div style='font-size:10px;letter-spacing:1px;color:#ef9a9a;font-family:monospace;margin-bottom:6px;'>"
+            "SETUP NEEDED</div>", unsafe_allow_html=True)
+        for it in issues:
+            st.markdown(f"- {it}")
+        st.markdown("<hr class='divider'>", unsafe_allow_html=True)
+
+    # ---- Password gate -------------------------------------------------------
+    try:
+        cfg_pw = st.secrets["app"]["update_password"]
+    except Exception:
+        cfg_pw = None
+
+    authed = True
+    if cfg_pw is not None:
+        if st.session_state.get("upd_authed"):
+            authed = True
+        else:
+            authed = False
+            pw = st.text_input("Update password", type="password", key="upd_pw")
+            if st.button("Unlock", key="upd_unlock"):
+                if pw == cfg_pw:
+                    st.session_state["upd_authed"] = True
+                    st.rerun()
+                else:
+                    st.error("Incorrect password.")
+    else:
+        st.markdown(
+            "<div style='font-size:10px;color:#cd7f32;font-family:monospace;margin-bottom:8px;'>"
+            "⚠ No update password set. Add `[app] update_password` in Secrets to protect these buttons "
+            "if your app is public.</div>", unsafe_allow_html=True)
+
+    can_commit = _GITHUB_AVAILABLE and token is not None
+
+    if authed:
+        # ===== STEP 1 — Scrape & compare =====================================
+        st.markdown("<div class='upd-step'>① SCRAPE &amp; COMPARE</div>", unsafe_allow_html=True)
+        seasons_raw = st.text_input(
+            "Seasons to scrape (comma-separated)", value="2026, 2027", key="upd_seasons",
+            help="Season N means the YYYY ending year, e.g. 2026 = 2025-2026 season.")
+
+        if st.button("RUN SCRAPE", key="btn_scrape", disabled=not _SCRAPER_AVAILABLE):
+            try:
+                seasons = [int(s.strip()) for s in seasons_raw.split(",") if s.strip()]
+            except ValueError:
+                seasons = []
+                st.error("Could not parse seasons. Use e.g. `2026, 2027`.")
+
+            if seasons:
+                with st.status("Scraping cuetracker…", expanded=True) as status:
+                    try:
+                        combined, new_matches, preview = scrape_and_diff(
+                            seasons, progress_cb=lambda m: status.write(m))
+                        # Stage locally so Save / Run-models use fresh data this session
+                        combined.to_parquet(PARQUET_PATH)
+                        st.session_state["upd_preview"] = preview
+                        st.session_state["upd_new_count"] = len(new_matches)
+                        st.session_state["upd_scraped"] = True
+                        status.update(
+                            label=f"Done — {len(new_matches)} new match(es) staged locally",
+                            state="complete")
+                    except Exception as e:
+                        st.session_state["upd_scraped"] = False
+                        status.update(label="Scrape failed", state="error")
+                        st.exception(e)
+
+        if st.session_state.get("upd_preview") is not None:
+            n = st.session_state.get("upd_new_count", 0)
+            st.markdown(
+                f"<div style='font-size:12px;color:#a5d6a7;font-family:monospace;margin:8px 0;'>"
+                f"{n} new match(es) found vs the saved dataset:</div>", unsafe_allow_html=True)
+            if n > 0:
+                st.dataframe(st.session_state["upd_preview"], use_container_width=True, hide_index=True)
+            else:
+                st.markdown(
+                    "<div style='font-size:11px;color:#888888;font-family:monospace;'>"
+                    "Nothing new — the dataset is already up to date.</div>", unsafe_allow_html=True)
+
+        st.markdown("<hr class='divider'>", unsafe_allow_html=True)
+
+        # ===== STEP 2 — Save new data to GitHub ==============================
+        st.markdown("<div class='upd-step'>② SAVE NEW MATCH DATA → GITHUB</div>", unsafe_allow_html=True)
+        save_data_disabled = not (can_commit and st.session_state.get("upd_scraped"))
+        if st.button("SAVE DATA TO GITHUB", key="btn_save_data", disabled=save_data_disabled):
+            with st.status("Committing match data…", expanded=True) as status:
+                try:
+                    status.write(f"Reading staged {PARQUET_PATH}…")
+                    with open(PARQUET_PATH, "rb") as f:
+                        pq_bytes = f.read()
+                    n = st.session_state.get("upd_new_count", 0)
+                    msg = f"Update match data ({n} new matches) via app {datetime.utcnow():%Y-%m-%d %H:%M UTC}"
+                    status.write("Pushing commit to GitHub…")
+                    sha = commit_files_to_github(token, repo_name, branch, {PARQUET_PATH: pq_bytes}, msg)
+                    status.update(label=f"Committed ({sha[:7]}). App will reboot shortly.", state="complete")
+                    st.success(f"Pushed {PARQUET_PATH} → {repo_name}@{branch}  ({sha[:7]})")
+                    st.info("Streamlit will redeploy automatically on the new commit. "
+                            "You can run the models now (same session) or after it reboots.")
+                except Exception as e:
+                    status.update(label="Commit failed", state="error")
+                    st.exception(e)
+        if save_data_disabled and not st.session_state.get("upd_scraped"):
+            st.markdown("<div style='font-size:10px;color:#444455;font-family:monospace;'>"
+                        "Run a scrape first.</div>", unsafe_allow_html=True)
+
+        st.markdown("<hr class='divider'>", unsafe_allow_html=True)
+
+        # ===== STEP 3 — Run models & save ====================================
+        st.markdown("<div class='upd-step'>③ RUN MODELS &amp; SAVE → GITHUB</div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div style='font-size:10px;color:#888888;font-family:monospace;margin-bottom:6px;'>"
+            "Runs ELO-beta, ELO-frames and the centuries model on the current dataset, then commits "
+            "ratings.json, player_rates.json and player_matches_df.csv. This is the heavy step "
+            "(~minutes, loads the full frame dataset).</div>", unsafe_allow_html=True)
+
+        mc1, mc2, mc3 = st.columns(3)
+        with mc1:
+            elob_k = st.number_input("ELO-beta K", value=14, step=1, key="upd_elob_k")
+        with mc2:
+            elof_k = st.number_input("ELO-frames K", value=16, step=1, key="upd_elof_k")
+        with mc3:
+            halflife = st.number_input("Century halflife (days)", value=220, step=10, key="upd_halflife")
+
+        run_models_disabled = not (can_commit and os.path.exists(PARQUET_PATH))
+        if st.button("RUN MODELS & SAVE", key="btn_run_models", disabled=run_models_disabled):
+            with st.status("Running models…", expanded=True) as status:
+                try:
+                    status.write(f"Loading {PARQUET_PATH}…")
+                    df_frames = pd.read_parquet(PARQUET_PATH)
+
+                    ratings_obj, new_player_rates, matches_df = run_models_pipeline(
+                        df_frames, elob_k=int(elob_k), elof_k=int(elof_k),
+                        halflife=int(halflife), progress_cb=lambda m: status.write(m))
+
+                    # Serialize (allow_nan=True keeps NaN tokens, matching existing files)
+                    ratings_bytes = json.dumps(ratings_obj).encode("utf-8")
+                    rates_bytes = json.dumps(new_player_rates).encode("utf-8")
+                    csv_bytes = matches_df.to_csv(index=False).encode("utf-8")
+
+                    # Write locally too so this session reflects new data after cache clear
+                    status.write("Writing local copies…")
+                    with open(RATINGS_PATH, "wb") as f:
+                        f.write(ratings_bytes)
+                    with open(PLAYER_RATES_PATH, "wb") as f:
+                        f.write(rates_bytes)
+                    with open(MATCHES_CSV_PATH, "wb") as f:
+                        f.write(csv_bytes)
+
+                    status.write("Committing model files to GitHub…")
+                    msg = f"Re-run models via app {datetime.utcnow():%Y-%m-%d %H:%M UTC}"
+                    sha = commit_files_to_github(
+                        token, repo_name, branch,
+                        {RATINGS_PATH: ratings_bytes,
+                         PLAYER_RATES_PATH: rates_bytes,
+                         MATCHES_CSV_PATH: csv_bytes},
+                        msg)
+
+                    st.cache_data.clear()
+                    status.update(
+                        label=f"Models committed ({sha[:7]}). App will reboot shortly.",
+                        state="complete")
+                    st.success(
+                        f"Pushed ratings.json, player_rates.json, player_matches_df.csv → "
+                        f"{repo_name}@{branch}  ({sha[:7]})")
+                    st.info("Caches cleared. The app will redeploy on the new commit; "
+                            "predictions will then use the updated ratings.")
+                except MemoryError:
+                    status.update(label="Out of memory", state="error")
+                    st.error(
+                        "The model step ran out of memory on this host. The scrape/save steps still "
+                        "work — run the models locally (match_models_update + century_functions) and "
+                        "commit those three files, or run the app on a larger instance.")
+                except Exception as e:
+                    status.update(label="Model run failed", state="error")
+                    st.exception(e)
