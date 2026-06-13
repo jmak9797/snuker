@@ -372,11 +372,18 @@ def get_tournament_matches(tourn_links, progress_cb=None):
     for tourn in tourn_links:
         if progress_cb:
             progress_cb(f"  · {tourn}")
-        response = requests.get(tourn)
-        soup = BeautifulSoup(response.content, "html.parser")
-        tourn_data = get_tournament_info(soup)
-        data = sf.get_frame_level_data(soup)
-        if "match_date" not in data.columns:
+        try:
+            response = requests.get(tourn)
+            soup = BeautifulSoup(response.content, "html.parser")
+            tourn_data = get_tournament_info(soup)
+            data = sf.get_frame_level_data(soup)
+        except ValueError:
+            # No matches on this page yet (e.g. an upcoming tournament) ->
+            # get_frame_level_data hits pd.concat([]) and raises. Skip it.
+            if progress_cb:
+                progress_cb("    skipped (no matches found)")
+            continue
+        if data is None or len(data) == 0 or "match_date" not in data.columns:
             if progress_cb:
                 progress_cb("    skipped (no match_date)")
             continue
@@ -384,6 +391,8 @@ def get_tournament_matches(tourn_links, progress_cb=None):
         data["status"] = tourn_data.get("status")
         data["location"] = tourn_data.get("location")
         full_data.append(data)
+    if not full_data:
+        raise RuntimeError("No completed matches found for the requested seasons.")
     full_data = pd.concat(full_data)
     full_data[["match_id", "frame_number"]] = full_data[["match_id", "frame_number"]].astype(int)
     return full_data.sort_values(["match_date", "match_id", "frame_number"]).reset_index(drop=True)
