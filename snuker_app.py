@@ -479,8 +479,14 @@ def load_all_snooker_data(seasons, progress_cb=None):
     return data
 
 
-def scrape_and_diff(seasons, progress_cb=None):
-    """Scrape, merge with master parquet, return (combined_df, new_match_ids, preview_df)."""
+def scrape_and_diff(seasons, min_date="2026-01-01", progress_cb=None):
+    """
+    Scrape, merge with master parquet, return (combined_df, new_match_ids, preview_df).
+
+    min_date ("YYYY-MM-DD"): only matches played on or after this date are
+    considered when detecting which games are new. match_date is stored as an
+    ISO-prefixed string, so a lexicographic compare against an ISO date works.
+    """
     def log(m):
         if progress_cb:
             progress_cb(m)
@@ -493,13 +499,13 @@ def scrape_and_diff(seasons, progress_cb=None):
     log("Loading existing master dataset…")
     output = pd.read_parquet(PARQUET_PATH)
     output = _normalize_names(output)
-    existing_matches = output[output.match_date > "2026-01-01"].match_id.unique()
+    existing_matches = output[output.match_date >= min_date].match_id.unique()
 
     combined = (
         pd.concat([output, player_df])
         .drop_duplicates(["match_id", "player_name", "frame_number"], keep="last")
     )
-    output_matches = combined[combined.match_date > "2026-01-01"].match_id.unique()
+    output_matches = combined[combined.match_date >= min_date].match_id.unique()
     new_matches = [m for m in output_matches if m not in existing_matches]
 
     preview = (
@@ -507,7 +513,7 @@ def scrape_and_diff(seasons, progress_cb=None):
         .drop_duplicates("match_id")
         .reset_index(drop=True)
     )
-    log(f"{len(new_matches)} new match(es) vs the saved dataset.")
+    log(f"{len(new_matches)} new match(es) on or after {min_date}.")
     return combined, new_matches, preview
 
 
@@ -1598,9 +1604,16 @@ with tab_update:
     if authed:
         # ===== STEP 1 — Scrape & compare =====================================
         st.markdown("<div class='upd-step'>① SCRAPE &amp; COMPARE</div>", unsafe_allow_html=True)
-        seasons_raw = st.text_input(
-            "Seasons to scrape (comma-separated)", value="2026, 2027", key="upd_seasons",
-            help="Season N means the YYYY ending year, e.g. 2026 = 2025-2026 season.")
+        sc1, sc2 = st.columns([2, 1])
+        with sc1:
+            seasons_raw = st.text_input(
+                "Seasons to scrape (comma-separated)", value="2026, 2027", key="upd_seasons",
+                help="Season N means the YYYY ending year, e.g. 2026 = 2025-2026 season.")
+        with sc2:
+            default_min_date = (pd.Timestamp.now() - pd.DateOffset(months=1)).date()
+            min_date_val = st.date_input(
+                "Detect matches on/after", value=default_min_date, key="upd_min_date",
+                help="Only games on or after this date are flagged as new. Defaults to one month ago.")
 
         if st.button("RUN SCRAPE", key="btn_scrape", disabled=not _SCRAPER_AVAILABLE):
             try:
@@ -1609,11 +1622,13 @@ with tab_update:
                 seasons = []
                 st.error("Could not parse seasons. Use e.g. `2026, 2027`.")
 
+            min_date_str = min_date_val.strftime("%Y-%m-%d")
             if seasons:
                 with st.status("Scraping cuetracker…", expanded=True) as status:
                     try:
                         combined, new_matches, preview = scrape_and_diff(
-                            seasons, progress_cb=lambda m: status.write(m))
+                            seasons, min_date=min_date_str,
+                            progress_cb=lambda m: status.write(m))
                         # Stage locally so Save / Run-models use fresh data this session
                         combined.to_parquet(PARQUET_PATH)
                         st.session_state["upd_preview"] = preview
