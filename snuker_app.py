@@ -398,7 +398,27 @@ def get_tournament_matches(tourn_links, progress_cb=None):
     return full_data.sort_values(["match_date", "match_id", "frame_number"]).reset_index(drop=True)
 
 
+def _normalize_names(df, cols=("player_name", "opposition_name",
+                               "player_1_name", "player_2_name")):
+    """
+    Make player-name strings consistent so freshly-scraped rows share the
+    exact same key as the historical data. Fixes hidden whitespace /
+    non-breaking spaces that otherwise split one player into two keys and
+    break the 2-rows-per-match assumption in the ELO loop.
+    """
+    for col in cols:
+        if col in df.columns:
+            df[col] = (
+                df[col].astype(str)
+                .str.replace("\u00a0", " ", regex=False)   # non-breaking space
+                .str.replace(r"\s+", " ", regex=True)        # collapse whitespace
+                .str.strip()
+            )
+    return df
+
+
 def _add_extra_details(df):
+    df = _normalize_names(df)
     cols = ["player_1_score", "player_2_score", "best_of",
             "player_1_frame_score", "player_2_frame_score"]
     df[cols] = df[cols].astype(float)
@@ -468,9 +488,11 @@ def scrape_and_diff(seasons, progress_cb=None):
     data = load_all_snooker_data(seasons, progress_cb=progress_cb)
     log(f"Scraped {len(data):,} frame rows. Reshaping to player level…")
     player_df = match_frame_to_player_level(data)
+    player_df = _normalize_names(player_df)
 
     log("Loading existing master dataset…")
     output = pd.read_parquet(PARQUET_PATH)
+    output = _normalize_names(output)
     existing_matches = output[output.match_date > "2026-01-01"].match_id.unique()
 
     combined = (
@@ -494,6 +516,10 @@ def scrape_and_diff(seasons, progress_cb=None):
 # ════════════════════════════════════════════════════════════════════
 
 def _prepare_frame_df(df):
+    df = _normalize_names(df)
+    # After normalising names, collapse any rows that became duplicates because
+    # the same frame was previously stored under two name spellings.
+    df = df.drop_duplicates(["match_id", "player_name", "frame_number"], keep="last")
     df = df[
         ~df.tournament_name.astype(str).str.contains("Shoot")
         & ~df.tournament_name.astype(str).str.contains("6-Reds")
@@ -762,6 +788,15 @@ def run_models_pipeline(df_frames, elob_k=14, elof_k=16, halflife=220, progress_
 
     log("Preparing frame-level data…")
     df = _prepare_frame_df(df_frames)
+
+    # Visibility: the ELO loop skips any match without exactly 2 player rows.
+    # This is usually caused by a player-name mismatch splitting one side in two.
+    _per_match = df.drop_duplicates(["match_id", "player_name"]).groupby("match_id").size()
+    _bad = _per_match[_per_match != 2]
+    if len(_bad):
+        log(f"⚠ {len(_bad)} match(es) don't have exactly 2 players and will be "
+            f"skipped by ELO — likely a name mismatch. Example match_ids: "
+            f"{list(_bad.index[:5])}")
 
     log("Running ELO-beta (match-outcome model)…")
     df_elob, final_ratings_elob = run_elo_beta(df.copy(), k=elob_k)
