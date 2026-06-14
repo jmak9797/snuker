@@ -953,9 +953,9 @@ if run:
 # TABS
 # ════════════════════════════════════════════════════════════════════
 
-(tab_match, tab_handicap, tab_centuries, tab_betslip,
+(tab_match, tab_handicap, tab_centuries, tab_multi, tab_betslip,
  tab_results, tab_rankings, tab_update) = st.tabs([
-    "📊  MATCH ODDS", "↕️  HANDICAPS", "🔴  CENTURIES",
+    "📊  MATCH ODDS", "↕️  HANDICAPS", "🔴  CENTURIES", "🎯  MULTI MATCH",
     "📋  BET SLIP", "📅  RESULTS", "🏆  RANKINGS", "⚙️  UPDATE",
 ])
 
@@ -1441,6 +1441,157 @@ with tab_results:
                     f"</div>",
                     unsafe_allow_html=True)
                 st.markdown(_h2h_table_html(h2h_df.head(n_results * 2), pa, "#4fc3f7", "#ef9a9a"), unsafe_allow_html=True)
+
+
+# ────────────────────────────────────────────────────────────────────
+# TAB — Multi Match  (simple inputs -> target prices for many matches)
+# ────────────────────────────────────────────────────────────────────
+
+with tab_multi:
+    st.markdown("### 🎯 Multi Match")
+    st.markdown(
+        "<div style='font-size:11px;color:#888888;font-family:monospace;margin-bottom:12px;'>"
+        "Price several matches at once. ELOb weight and Edge below apply to every match."
+        "</div>", unsafe_allow_html=True)
+
+    # ---- Top-level controls (apply to all matches) --------------------------
+    mtc1, mtc2, mtc3, mtc4 = st.columns([1, 1, 1, 1.2])
+    with mtc1:
+        mm_n = st.number_input("Number of matches", min_value=1, max_value=30,
+                               value=3, step=1, key="mm_n")
+    with mtc2:
+        mm_elob_w = st.slider("ELOb weight", 0.0, 1.0, 0.8, step=0.05,
+                              format="%.2f", key="mm_elob_w")
+    with mtc3:
+        mm_edge_pct = st.slider("Edge target", 0.0, 20.0, 5.0, step=0.5,
+                                format="%.1f%%", key="mm_edge")
+    with mtc4:
+        mm_century = st.checkbox("Century preds", value=False, key="mm_century",
+                                 help="Adds an O/U centuries line per match and outputs "
+                                      "over/under target prices.")
+    mm_edge = mm_edge_pct / 100
+    n = int(mm_n)
+
+    st.markdown("<hr class='divider'>", unsafe_allow_html=True)
+
+    # ---- Input grid ---------------------------------------------------------
+    if mm_century:
+        head_cols = st.columns([0.4, 3, 3, 1.2, 1.2])
+        labels = ["#", "PLAYER 1", "PLAYER 2", "FIRST TO", "O/U LINE"]
+    else:
+        head_cols = st.columns([0.4, 3, 3, 1.2])
+        labels = ["#", "PLAYER 1", "PLAYER 2", "FIRST TO"]
+    for c, lab in zip(head_cols, labels):
+        c.markdown(f"<div style='font-size:9px;letter-spacing:2px;color:#444455;"
+                   f"font-family:monospace;padding-top:8px;'>{lab}</div>",
+                   unsafe_allow_html=True)
+
+    mm_inputs = []
+    for i in range(n):
+        if mm_century:
+            cc = st.columns([0.4, 3, 3, 1.2, 1.2])
+        else:
+            cc = st.columns([0.4, 3, 3, 1.2])
+        cc[0].markdown(
+            f"<div style='font-family:monospace;color:#4fc3f7;font-weight:700;"
+            f"padding-top:12px;'>{i+1}</div>", unsafe_allow_html=True)
+        pa_i = cc[1].selectbox("p1", sorted_players, index=0,
+                               key=f"mm_p1_{i}", label_visibility="collapsed")
+        pb_i = cc[2].selectbox("p2", sorted_players, index=min(1, len(sorted_players)-1),
+                               key=f"mm_p2_{i}", label_visibility="collapsed")
+        ft_i = cc[3].number_input("ft", min_value=1, max_value=18, value=6, step=1,
+                                  key=f"mm_ft_{i}", label_visibility="collapsed")
+        line_i = 1.5
+        if mm_century:
+            line_i = cc[4].number_input("line", min_value=0.5, value=1.5, step=1.0,
+                                        key=f"mm_line_{i}", label_visibility="collapsed",
+                                        format="%.1f")
+        mm_inputs.append((pa_i, pb_i, int(ft_i), float(line_i)))
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    if st.button("RUN PREDICTIONS", key="mm_run"):
+        rows = []
+        for i, (pa_i, pb_i, ft_i, line_i) in enumerate(mm_inputs):
+            row = {"idx": i + 1, "pa": pa_i, "pb": pb_i, "ft": ft_i, "line": line_i}
+            if pa_i == pb_i:
+                row["error"] = "same player"
+            else:
+                res = predict_match(pa_i, pb_i, ft_i, mm_elob_w, mm_edge,
+                                    ratings_elob, ratings_elof)
+                row["tp1"] = res["edge_a"]
+                row["tp2"] = res["edge_b"]
+                if mm_century:
+                    cen = predict_match_centuries(pa_i, pb_i, ft_i, player_rates,
+                                                  res["pfa_blended"])
+                    ou = over_under(cen, "match", line_i)
+                    row["over_tp"] = (1 / ou["over"]) * (1 + mm_edge) if ou["over"] > 0 else None
+                    row["under_tp"] = (1 / ou["under"]) * (1 + mm_edge) if ou["under"] > 0 else None
+            rows.append(row)
+        st.session_state["mm_results"] = rows
+        st.session_state["mm_results_century"] = mm_century
+
+    # ---- Output table -------------------------------------------------------
+    results = st.session_state.get("mm_results")
+    if results:
+        century_out = st.session_state.get("mm_results_century", False)
+
+        def _tp(v):
+            return f"{v:.3f}" if isinstance(v, (int, float)) and v is not None else "—"
+
+        if century_out:
+            header = (
+                "<table class='bet-table'><thead><tr>"
+                "<th>#</th><th>PLAYER 1</th><th>PLAYER 2</th><th>FT</th>"
+                "<th>TGT P1</th><th>TGT P2</th><th>LINE</th><th>OVER</th><th>UNDER</th>"
+                "</tr></thead><tbody>"
+            )
+        else:
+            header = (
+                "<table class='bet-table'><thead><tr>"
+                "<th>#</th><th>PLAYER 1</th><th>PLAYER 2</th><th>FT</th>"
+                "<th>TGT P1</th><th>TGT P2</th>"
+                "</tr></thead><tbody>"
+            )
+
+        body = ""
+        for r in results:
+            if r.get("error"):
+                span = 5 if not century_out else 8
+                body += (
+                    f"<tr><td>{r['idx']}</td>"
+                    f"<td style='color:#4fc3f7;'>{r['pa']}</td>"
+                    f"<td style='color:#ef9a9a;'>{r['pb']}</td>"
+                    f"<td colspan='{span}' style='color:#cd7f32;'>⚠ pick two different players</td></tr>"
+                )
+                continue
+            common = (
+                f"<tr><td>{r['idx']}</td>"
+                f"<td style='color:#4fc3f7;font-weight:700;'>{r['pa']}</td>"
+                f"<td style='color:#ef9a9a;font-weight:700;'>{r['pb']}</td>"
+                f"<td>{r['ft']}</td>"
+                f"<td style='color:#4fc3f7;font-weight:700;'>{_tp(r['tp1'])}</td>"
+                f"<td style='color:#ef9a9a;font-weight:700;'>{_tp(r['tp2'])}</td>"
+            )
+            if century_out:
+                ln = r["line"]
+                common += (
+                    f"<td style='color:#888888;'>{ln:.1f}</td>"
+                    f"<td style='color:#b39ddb;font-weight:700;'>O{ln:.1f}&nbsp;&nbsp;{_tp(r.get('over_tp'))}</td>"
+                    f"<td style='color:#b39ddb;font-weight:700;'>U{ln:.1f}&nbsp;&nbsp;{_tp(r.get('under_tp'))}</td>"
+                )
+            common += "</tr>"
+            body += common
+
+        st.markdown(header + body + "</tbody></table>", unsafe_allow_html=True)
+        st.markdown(
+            "<div style='font-size:10px;color:#444455;font-family:monospace;margin-top:8px;'>"
+            "Target price = true odds × (1 + edge). Centuries O/U is on the match total.</div>",
+            unsafe_allow_html=True)
+    else:
+        st.markdown(
+            "<div style='text-align:center;color:#444455;font-family:monospace;"
+            "font-size:13px;padding:24px 0;'>Enter your matches and press RUN PREDICTIONS</div>",
+            unsafe_allow_html=True)
 
 
 # ────────────────────────────────────────────────────────────────────
