@@ -1,0 +1,155 @@
+{
+  "WuhanOpen1": {
+    "x_players": 32,
+    "first_to_by_round": [
+      5,
+      5,
+      5,
+      6,
+      10
+    ],
+    "qualifier_first_to": 5,
+    "slots": [
+      {
+        "mode": "qualifier",
+        "player_a": "Xiao Guodong",
+        "player_b": "Wang Xinbo"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Jackson Page"
+      },
+      {
+        "mode": "qualifier",
+        "player_a": "Chris Wakelin",
+        "player_b": "Jordan Brown"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Steven Hallworth"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Daniel Wells"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Michael Holt"
+      },
+      {
+        "mode": "confirmed",
+        "player": "David Gilbert"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Mark Williams"
+      },
+      {
+        "mode": "qualifier",
+        "player_a": "Zhao Xintong",
+        "player_b": "Gao Yang"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Jak Jones"
+      },
+      {
+        "mode": "qualifier",
+        "player_a": "Barry Hawkins",
+        "player_b": "Hammad Miah"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Ryan Day"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Gary Wilson"
+      },
+      {
+        "mode": "qualifier",
+        "player_a": "Ding Junhui",
+        "player_b": "Liam Davies"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Hossein Vafaei"
+      },
+      {
+        "mode": "qualifier",
+        "player_a": "Neil Robertson",
+        "player_b": "Ben Mertens"
+      },
+      {
+        "mode": "qualifier",
+        "player_a": "Judd Trump",
+        "player_b": "Florian N\u00fc\u00dfle"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Yuan Sijun"
+      },
+      {
+        "mode": "qualifier",
+        "player_a": "Si Jiahui",
+        "player_b": "Jiang Jun"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Dylan Emery"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Ali Carter"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Kyren Wilson"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Chang Bingyu"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Liu Hongyu"
+      },
+      {
+        "mode": "qualifier",
+        "player_a": "Shaun Murphy",
+        "player_b": "Alfie Burden"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Pang Junxu"
+      },
+      {
+        "mode": "qualifier",
+        "player_a": "Mark Selby",
+        "player_b": "Fan Zhengyi"
+      },
+      {
+        "mode": "confirmed",
+        "player": "He Guoqiang"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Yao Pengcheng"
+      },
+      {
+        "mode": "qualifier",
+        "player_a": "Ronnie O'Sullivan",
+        "player_b": "Ashley Carty"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Stephen Maguire"
+      },
+      {
+        "mode": "qualifier",
+        "player_a": "Wu Yize",
+        "player_b": "Artemijs Zizins"
+      }
+    ]
+  }
+}
