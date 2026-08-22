@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 from scipy.stats import binom
+from scipy.special import comb as sp_comb
 import plotly.graph_objects as go
 
 # ── Optional deps for the Update tab ─────────────────────────────────
@@ -329,6 +330,166 @@ def over_under(result, selection, line):
     under = sum(p for c, p in dist.items() if c <= threshold)
     over  = sum(p for c, p in dist.items() if c > threshold)
     return {"under": under, "over": over}
+
+
+# ════════════════════════════════════════════════════════════════════
+# MODEL FUNCTIONS — Outright simulation (serving)
+# ════════════════════════════════════════════════════════════════════
+# Vectorised (numpy) Monte Carlo bracket simulation. Ratings update
+# match-by-match within each simulated tournament using the same
+# delta formulas as run_elo_beta / run_elo_frames, so a player's
+# projected strength genuinely evolves as the hypothetical draw plays
+# out. Chunked over simulations so peak memory stays bounded no matter
+# how large N_sims is — only one chunk's arrays are ever live at once.
+
+OUTRIGHT_ELOB_K = 14          # mirrors run_elo_beta's default k
+OUTRIGHT_ELOB_K_DECAY = 0.02  # mirrors run_elo_beta's default k_decay
+OUTRIGHT_ELOF_K = 16          # mirrors run_elo_frames's default k
+OUTRIGHT_CHUNK_SIZE = 4000    # sims processed per batch (bounds peak memory)
+
+
+def outright_round_plan(x_players: int) -> list:
+    """Round names in PLAY order (earliest round first, Final last)."""
+    n_rounds = int(round(math.log2(x_players)))
+    names = []
+    for r in range(n_rounds):
+        dist = n_rounds - 1 - r
+        if dist == 0:
+            names.append("Final")
+        elif dist == 1:
+            names.append("Semi Final")
+        elif dist == 2:
+            names.append("Quarter Final")
+        else:
+            names.append(f"Round of {2 ** (dist + 1)}")
+    return names
+
+
+def _sample_loser_frames(p_win_frame: np.ndarray, first_to: int, rng: np.random.Generator) -> np.ndarray:
+    """
+    Vectorised draw of the losing side's frame count (0..first_to-1), from the
+    scoreline distribution conditional on this side having won the match.
+    Same combinatorics as scoreline_probs, worked in log-space for stability
+    at large first_to.
+    """
+    flat = p_win_frame.ravel()
+    js = np.arange(first_to)
+    log_p = np.log(np.clip(flat, 1e-12, 1.0))
+    log_q = np.log(np.clip(1.0 - flat, 1e-12, 1.0))
+    log_combs = np.log(sp_comb(first_to - 1 + js, js))
+    log_w = log_combs[None, :] + first_to * log_p[:, None] + js[None, :] * log_q[:, None]
+    w = np.exp(log_w - log_w.max(axis=1, keepdims=True))
+    cdf = np.cumsum(w, axis=1)
+    cdf /= cdf[:, -1:]
+    u = rng.random((flat.shape[0], 1))
+    j_idx = (cdf >= u).argmax(axis=1)
+    return js[j_idx].reshape(p_win_frame.shape)
+
+
+def _simulate_outright_chunk(bracket_players, first_to_by_round, elob_w,
+                              ratings_elob, ratings_elof, n_chunk, rng):
+    """Runs n_chunk simulated tournaments. Returns (champion_counts, finalist_counts), each length X."""
+    x_players = len(bracket_players)
+
+    init_rat_b = np.array([ratings_elob.get(p, {}).get("rating", 0.0) for p in bracket_players], dtype=np.float64)
+    init_rat_f = np.array([ratings_elof.get(p, {}).get("rating", 0.0) for p in bracket_players], dtype=np.float64)
+    init_n_b = np.array([ratings_elob.get(p, {}).get("matches_played", 0) for p in bracket_players], dtype=np.float64)
+    init_n_f = np.array([ratings_elof.get(p, {}).get("matches_played", 0) for p in bracket_players], dtype=np.float64)
+
+    rat_b = np.tile(init_rat_b, (n_chunk, 1))
+    rat_f = np.tile(init_rat_f, (n_chunk, 1))
+    n_b = np.tile(init_n_b, (n_chunk, 1))
+    n_f = np.tile(init_n_f, (n_chunk, 1))
+
+    occupant = np.tile(np.arange(x_players, dtype=np.int32), (n_chunk, 1))
+    finalists = None
+
+    for first_to in first_to_by_round:
+        best_of = 2 * first_to - 1
+        if occupant.shape[1] == 2:
+            finalists = occupant.copy()
+
+        a_idx = occupant[:, 0::2]
+        b_idx = occupant[:, 1::2]
+
+        ra_b = np.take_along_axis(rat_b, a_idx, axis=1)
+        rb_b = np.take_along_axis(rat_b, b_idx, axis=1)
+        ra_f = np.take_along_axis(rat_f, a_idx, axis=1)
+        rb_f = np.take_along_axis(rat_f, b_idx, axis=1)
+        na_b = np.take_along_axis(n_b, a_idx, axis=1)
+        nb_b = np.take_along_axis(n_b, b_idx, axis=1)
+
+        pf_b = elo_expected_frame(ra_b, rb_b)
+        pf_f = elo_expected_frame(ra_f, rb_f)
+        pm_b = p_win_match(pf_b, best_of)
+        pm_f = p_win_match(pf_f, best_of)
+
+        prob_a = elob_w * pm_b + (1 - elob_w) * pm_f          # blended match-win prob (matches Match Odds tab)
+        pf_blended = elob_w * pf_b + (1 - elob_w) * pf_f      # blended frame prob (drives scoreline sampling,
+                                                                # same convention as tab_handicap/tab_centuries)
+
+        a_wins = rng.random(prob_a.shape) < prob_a
+        p_win_frame = np.where(a_wins, pf_blended, 1 - pf_blended)
+        loser_frames = _sample_loser_frames(p_win_frame, first_to, rng).astype(np.float64)
+
+        a_frames = np.where(a_wins, float(first_to), loser_frames)
+        b_frames = np.where(a_wins, loser_frames, float(first_to))
+        total_frames = a_frames + b_frames
+        ratio_a = a_frames / total_frames
+        ratio_b = b_frames / total_frames
+
+        # ELO-beta update (match-outcome model, margin-of-victory + K-decay) — mirrors run_elo_beta
+        winner_rat_b = np.where(a_wins, ra_b, rb_b)
+        loser_rat_b = np.where(a_wins, rb_b, ra_b)
+        mov = np.log(np.abs(a_frames - b_frames) + 1) * (2.2 / ((winner_rat_b - loser_rat_b) * 0.001 + 2.2))
+        outcome_a = a_wins.astype(np.float64)
+        k1_b = OUTRIGHT_ELOB_K / (1 + OUTRIGHT_ELOB_K_DECAY * na_b)
+        k2_b = OUTRIGHT_ELOB_K / (1 + OUTRIGHT_ELOB_K_DECAY * nb_b)
+        delta_a_b = k1_b * mov * (outcome_a - pm_b)
+        delta_b_b = k2_b * mov * ((1 - outcome_a) - (1 - pm_b))
+
+        # ELO-frames update (frame-ratio model) — mirrors run_elo_frames
+        delta_a_f = OUTRIGHT_ELOF_K * (ratio_a - pf_f)
+        delta_b_f = OUTRIGHT_ELOF_K * (ratio_b - (1 - pf_f))
+
+        np.put_along_axis(rat_b, a_idx, ra_b + delta_a_b, axis=1)
+        np.put_along_axis(rat_b, b_idx, rb_b + delta_b_b, axis=1)
+        np.put_along_axis(rat_f, a_idx, ra_f + delta_a_f, axis=1)
+        np.put_along_axis(rat_f, b_idx, rb_f + delta_b_f, axis=1)
+        np.put_along_axis(n_b, a_idx, na_b + 1, axis=1)
+        np.put_along_axis(n_b, b_idx, nb_b + 1, axis=1)
+
+        occupant = np.where(a_wins, a_idx, b_idx)
+
+    champion_counts = np.bincount(occupant.ravel(), minlength=x_players)
+    finalist_counts = np.bincount(finalists.ravel(), minlength=x_players)
+    return champion_counts, finalist_counts
+
+
+def run_outright_simulation(bracket_players, first_to_by_round, n_sims, elob_w,
+                            ratings_elob, ratings_elof, progress_cb=None, seed=None):
+    """Chunked orchestrator. Returns {"champion_prob": {...}, "finalist_prob": {...}, "n_sims": n}."""
+    x_players = len(bracket_players)
+    rng = np.random.default_rng(seed)
+    champion_counts = np.zeros(x_players, dtype=np.int64)
+    finalist_counts = np.zeros(x_players, dtype=np.int64)
+
+    done = 0
+    while done < n_sims:
+        n_chunk = min(OUTRIGHT_CHUNK_SIZE, n_sims - done)
+        champ, fin = _simulate_outright_chunk(
+            bracket_players, first_to_by_round, elob_w, ratings_elob, ratings_elof, n_chunk, rng)
+        champion_counts += champ
+        finalist_counts += fin
+        done += n_chunk
+        if progress_cb:
+            progress_cb(done, n_sims)
+
+    return {
+        "champion_prob": {p: champion_counts[i] / n_sims for i, p in enumerate(bracket_players)},
+        "finalist_prob": {p: finalist_counts[i] / n_sims for i, p in enumerate(bracket_players)},
+        "n_sims": n_sims,
+    }
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -953,9 +1114,9 @@ if run:
 # TABS
 # ════════════════════════════════════════════════════════════════════
 
-(tab_match, tab_handicap, tab_centuries, tab_multi, tab_betslip,
+(tab_match, tab_handicap, tab_centuries, tab_multi, tab_outright, tab_betslip,
  tab_results, tab_rankings, tab_update) = st.tabs([
-    "📊  MATCH ODDS", "↕️  HANDICAPS", "🔴  CENTURIES", "🎯  MULTI MATCH",
+    "📊  MATCH ODDS", "↕️  HANDICAPS", "🔴  CENTURIES", "🎯  MULTI MATCH", "🔱  OUTRIGHT",
     "📋  BET SLIP", "📅  RESULTS", "🏆  RANKINGS", "⚙️  UPDATE",
 ])
 
@@ -1592,6 +1753,112 @@ with tab_multi:
             "<div style='text-align:center;color:#444455;font-family:monospace;"
             "font-size:13px;padding:24px 0;'>Enter your matches and press RUN PREDICTIONS</div>",
             unsafe_allow_html=True)
+
+
+# ────────────────────────────────────────────────────────────────────
+# TAB — Outright  (Monte Carlo bracket simulation, live rating updates)
+# ────────────────────────────────────────────────────────────────────
+
+def _outright_table_html(prob_dict: dict, edge_val: float) -> str:
+    rows = sorted(prob_dict.items(), key=lambda kv: kv[1], reverse=True)
+    rows_html = ""
+    for player, prob in rows:
+        if prob <= 0:
+            true_o_s, tgt_s = "—", "—"
+        else:
+            true_o = 1 / prob
+            tgt = true_o * (1 + edge_val)
+            true_o_s, tgt_s = f"{true_o:.2f}", f"{tgt:.2f}"
+        rows_html += (
+            f"<tr><td style='color:#ffffff;font-weight:600;font-family:Rajdhani,sans-serif;font-size:15px;'>{player}</td>"
+            f"<td style='text-align:right;'>{prob*100:.2f}%</td>"
+            f"<td style='text-align:right;color:#888888;'>{true_o_s}</td>"
+            f"<td style='text-align:right;color:#4fc3f7;font-weight:700;'>{tgt_s}</td>"
+            f"</tr>"
+        )
+    return (
+        "<table class='rank-table'><thead><tr>"
+        "<th>PLAYER</th><th class='num'>PROB</th><th class='num'>TRUE</th><th class='num'>TARGET</th>"
+        "</tr></thead><tbody>" + rows_html + "</tbody></table>"
+    )
+
+with tab_outright:
+    st.markdown("### 🔱 Outright")
+    st.markdown(
+        "<div style='font-size:11px;color:#888888;font-family:monospace;margin-bottom:12px;'>"
+        "Monte Carlo knockout-bracket simulation. Ratings update match-by-match within each "
+        "simulated run of the tournament. Uses the ELOb weight and edge target set at the top of the page."
+        "</div>", unsafe_allow_html=True)
+
+    x_players = st.selectbox("NUMBER OF PLAYERS", [2, 4, 8, 16, 32, 64, 128], index=3, key="out_x")
+    out_rounds = outright_round_plan(x_players)
+    n_out_rounds = len(out_rounds)
+
+    st.markdown("<div class='section-cap'>ROUND FORMAT (FIRST TO)</div>", unsafe_allow_html=True)
+    ft_cols = st.columns(n_out_rounds)
+    out_first_to = []
+    for i, (col, rname) in enumerate(zip(ft_cols, out_rounds)):
+        with col:
+            ft_i = st.selectbox(rname, list(range(1, 19)), index=9, key=f"out_ft_{x_players}_{i}")
+            out_first_to.append(int(ft_i))
+
+    st.markdown("<div class='section-cap' style='margin-top:16px;'>ROUND 1 MATCHUPS</div>", unsafe_allow_html=True)
+    n_out_matches = x_players // 2
+    out_bracket = [None] * x_players
+    for i in range(n_out_matches):
+        c1, cvs, c2 = st.columns([4, 1, 4])
+        d1 = min(2 * i, len(sorted_players) - 1)
+        d2 = min(2 * i + 1, len(sorted_players) - 1)
+        with c1:
+            p1 = st.selectbox(f"Match {i+1} — Player 1", sorted_players, index=d1,
+                              key=f"out_p_{x_players}_{i}_1")
+        with cvs:
+            st.markdown("<div style='text-align:center;padding-top:30px;color:#444455;font-family:monospace;'>vs</div>",
+                       unsafe_allow_html=True)
+        with c2:
+            p2 = st.selectbox(f"Match {i+1} — Player 2", sorted_players, index=d2,
+                              key=f"out_p_{x_players}_{i}_2")
+        out_bracket[2*i], out_bracket[2*i + 1] = p1, p2
+
+    out_dupes = sorted({p for p in out_bracket if out_bracket.count(p) > 1})
+    if out_dupes:
+        st.error(f"Duplicate player(s) in the bracket: {', '.join(out_dupes)}. Each player can only occupy one slot.")
+
+    st.markdown("<div class='section-cap' style='margin-top:16px;'>SIMULATIONS</div>", unsafe_allow_html=True)
+    n_sims_raw = st.number_input("Number of simulations (1 – 100,000)", min_value=1, max_value=100000,
+                                 value=20000, step=1000, key="out_nsims")
+    out_n_sims = int(max(1, min(100000, n_sims_raw)))
+
+    st.markdown("<br>", unsafe_allow_html=True)
+    run_outright = st.button("RUN SIMULATION", key="out_run", disabled=bool(out_dupes))
+
+    if run_outright:
+        out_progress = st.progress(0.0, text="Simulating…")
+        def _out_cb(done, total):
+            out_progress.progress(done / total, text=f"Simulated {done:,} / {total:,} tournaments…")
+        out_result = run_outright_simulation(
+            out_bracket, out_first_to, out_n_sims, elob_w, ratings_elob, ratings_elof,
+            progress_cb=_out_cb)
+        out_progress.empty()
+        st.session_state["outright_result"] = out_result
+
+    out_result = st.session_state.get("outright_result")
+    if out_result is None:
+        st.markdown('<div class="match-info">Set up the bracket and press RUN SIMULATION</div>', unsafe_allow_html=True)
+    else:
+        sub_out_win, sub_out_final = st.tabs(["🏆  OUTRIGHT WIN", "🥈  MAKE THE FINAL"])
+        with sub_out_win:
+            st.markdown(
+                f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-bottom:8px;'>"
+                f"{out_result['n_sims']:,} simulated tournaments &nbsp;·&nbsp; edge target {edge:.1%}</div>",
+                unsafe_allow_html=True)
+            st.markdown(_outright_table_html(out_result["champion_prob"], edge), unsafe_allow_html=True)
+        with sub_out_final:
+            st.markdown(
+                f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-bottom:8px;'>"
+                f"{out_result['n_sims']:,} simulated tournaments &nbsp;·&nbsp; edge target {edge:.1%}</div>",
+                unsafe_allow_html=True)
+            st.markdown(_outright_table_html(out_result["finalist_prob"], edge), unsafe_allow_html=True)
 
 
 # ────────────────────────────────────────────────────────────────────
