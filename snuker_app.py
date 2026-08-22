@@ -107,6 +107,7 @@ PARQUET_PATH      = "match_frame_player_data.parq"   # master frame-level datase
 RATINGS_PATH      = "ratings.json"                   # {"elob": ..., "elof": ...}
 PLAYER_RATES_PATH = "player_rates.json"              # century rates
 MATCHES_CSV_PATH  = "player_matches_df.csv"          # historical results + preds
+OUTRIGHT_BRACKETS_PATH = "outright_brackets.json"    # saved Outright tab bracket presets
 
 # Columns used to preview newly-scraped matches
 MATCH_COLS = ["match_date", "tournament_name", "player_name",
@@ -386,15 +387,84 @@ def _sample_loser_frames(p_win_frame: np.ndarray, first_to: int, rng: np.random.
     return js[j_idx].reshape(p_win_frame.shape)
 
 
-def _simulate_outright_chunk(bracket_players, first_to_by_round, elob_w,
-                              ratings_elob, ratings_elof, n_chunk, rng):
-    """Runs n_chunk simulated tournaments. Returns (champion_counts, finalist_counts), each length X."""
-    x_players = len(bracket_players)
+def _play_round_vec(idx_a, idx_b, rat_b, rat_f, n_b, n_f, first_to, elob_w, rng):
+    """
+    Plays one round for every (sim, match) pair at once. idx_a/idx_b are (n_chunk, n_matches)
+    roster-index arrays for the two sides. rat_b/rat_f/n_b/n_f are (n_chunk, roster_size) state
+    arrays and are updated IN PLACE (winner and loser both get a rating delta + matches_played+1,
+    mirroring run_elo_beta/run_elo_frames). Returns the (n_chunk, n_matches) roster-index array
+    of winners.
+    """
+    best_of = 2 * first_to - 1
 
-    init_rat_b = np.array([ratings_elob.get(p, {}).get("rating", 0.0) for p in bracket_players], dtype=np.float64)
-    init_rat_f = np.array([ratings_elof.get(p, {}).get("rating", 0.0) for p in bracket_players], dtype=np.float64)
-    init_n_b = np.array([ratings_elob.get(p, {}).get("matches_played", 0) for p in bracket_players], dtype=np.float64)
-    init_n_f = np.array([ratings_elof.get(p, {}).get("matches_played", 0) for p in bracket_players], dtype=np.float64)
+    ra_b = np.take_along_axis(rat_b, idx_a, axis=1)
+    rb_b = np.take_along_axis(rat_b, idx_b, axis=1)
+    ra_f = np.take_along_axis(rat_f, idx_a, axis=1)
+    rb_f = np.take_along_axis(rat_f, idx_b, axis=1)
+    na_b = np.take_along_axis(n_b, idx_a, axis=1)
+    nb_b = np.take_along_axis(n_b, idx_b, axis=1)
+
+    pf_b = elo_expected_frame(ra_b, rb_b)
+    pf_f = elo_expected_frame(ra_f, rb_f)
+    pm_b = p_win_match(pf_b, best_of)
+    pm_f = p_win_match(pf_f, best_of)
+
+    prob_a = elob_w * pm_b + (1 - elob_w) * pm_f          # blended match-win prob (matches Match Odds tab)
+    pf_blended = elob_w * pf_b + (1 - elob_w) * pf_f      # blended frame prob (drives scoreline sampling,
+                                                            # same convention as tab_handicap/tab_centuries)
+
+    a_wins = rng.random(prob_a.shape) < prob_a
+    p_win_frame = np.where(a_wins, pf_blended, 1 - pf_blended)
+    loser_frames = _sample_loser_frames(p_win_frame, first_to, rng).astype(np.float64)
+
+    a_frames = np.where(a_wins, float(first_to), loser_frames)
+    b_frames = np.where(a_wins, loser_frames, float(first_to))
+    total_frames = a_frames + b_frames
+    ratio_a = a_frames / total_frames
+    ratio_b = b_frames / total_frames
+
+    # ELO-beta update (match-outcome model, margin-of-victory + K-decay) — mirrors run_elo_beta
+    winner_rat_b = np.where(a_wins, ra_b, rb_b)
+    loser_rat_b = np.where(a_wins, rb_b, ra_b)
+    mov = np.log(np.abs(a_frames - b_frames) + 1) * (2.2 / ((winner_rat_b - loser_rat_b) * 0.001 + 2.2))
+    outcome_a = a_wins.astype(np.float64)
+    k1_b = OUTRIGHT_ELOB_K / (1 + OUTRIGHT_ELOB_K_DECAY * na_b)
+    k2_b = OUTRIGHT_ELOB_K / (1 + OUTRIGHT_ELOB_K_DECAY * nb_b)
+    delta_a_b = k1_b * mov * (outcome_a - pm_b)
+    delta_b_b = k2_b * mov * ((1 - outcome_a) - (1 - pm_b))
+
+    # ELO-frames update (frame-ratio model) — mirrors run_elo_frames
+    delta_a_f = OUTRIGHT_ELOF_K * (ratio_a - pf_f)
+    delta_b_f = OUTRIGHT_ELOF_K * (ratio_b - (1 - pf_f))
+
+    np.put_along_axis(rat_b, idx_a, ra_b + delta_a_b, axis=1)
+    np.put_along_axis(rat_b, idx_b, rb_b + delta_b_b, axis=1)
+    np.put_along_axis(rat_f, idx_a, ra_f + delta_a_f, axis=1)
+    np.put_along_axis(rat_f, idx_b, rb_f + delta_b_f, axis=1)
+    np.put_along_axis(n_b, idx_a, na_b + 1, axis=1)
+    np.put_along_axis(n_b, idx_b, nb_b + 1, axis=1)
+
+    return np.where(a_wins, idx_a, idx_b)
+
+
+def _simulate_outright_chunk(roster, x_players, qualifiers, first_to_by_round, elob_w,
+                              ratings_elob, ratings_elof, n_chunk, rng):
+    """
+    Runs n_chunk simulated tournaments. `roster` is the full player-name list: the first
+    x_players entries are the Round 1 slot occupants (one per slot — for a slot still pending
+    a qualifier, this is that qualifier's "Player A"), followed by one extra entry per pending
+    qualifier for its "Player B". `qualifiers` is a list of {"slot", "other_idx", "first_to"}
+    dicts — before Round 1, each pending slot's qualifier is resolved (same rating-update
+    machinery as any other round) and the winner (with their post-qualifier rating) becomes
+    that slot's Round 1 occupant. Returns (champion_counts, finalist_counts), each length
+    len(roster).
+    """
+    r_size = len(roster)
+
+    init_rat_b = np.array([ratings_elob.get(p, {}).get("rating", 0.0) for p in roster], dtype=np.float64)
+    init_rat_f = np.array([ratings_elof.get(p, {}).get("rating", 0.0) for p in roster], dtype=np.float64)
+    init_n_b = np.array([ratings_elob.get(p, {}).get("matches_played", 0) for p in roster], dtype=np.float64)
+    init_n_f = np.array([ratings_elof.get(p, {}).get("matches_played", 0) for p in roster], dtype=np.float64)
 
     rat_b = np.tile(init_rat_b, (n_chunk, 1))
     rat_f = np.tile(init_rat_f, (n_chunk, 1))
@@ -402,83 +472,43 @@ def _simulate_outright_chunk(bracket_players, first_to_by_round, elob_w,
     n_f = np.tile(init_n_f, (n_chunk, 1))
 
     occupant = np.tile(np.arange(x_players, dtype=np.int32), (n_chunk, 1))
-    finalists = None
 
+    if qualifiers:
+        slot_idx = np.array([q["slot"] for q in qualifiers], dtype=np.int32)
+        other_idx = np.array([q["other_idx"] for q in qualifiers], dtype=np.int32)
+        qual_ft = qualifiers[0]["first_to"]   # one shared qualifying format for this bracket
+        idx_a = occupant[:, slot_idx]
+        idx_b = np.tile(other_idx, (n_chunk, 1))
+        winners = _play_round_vec(idx_a, idx_b, rat_b, rat_f, n_b, n_f, qual_ft, elob_w, rng)
+        occupant[:, slot_idx] = winners
+
+    finalists = None
     for first_to in first_to_by_round:
-        best_of = 2 * first_to - 1
         if occupant.shape[1] == 2:
             finalists = occupant.copy()
+        idx_a = occupant[:, 0::2]
+        idx_b = occupant[:, 1::2]
+        occupant = _play_round_vec(idx_a, idx_b, rat_b, rat_f, n_b, n_f, first_to, elob_w, rng)
 
-        a_idx = occupant[:, 0::2]
-        b_idx = occupant[:, 1::2]
-
-        ra_b = np.take_along_axis(rat_b, a_idx, axis=1)
-        rb_b = np.take_along_axis(rat_b, b_idx, axis=1)
-        ra_f = np.take_along_axis(rat_f, a_idx, axis=1)
-        rb_f = np.take_along_axis(rat_f, b_idx, axis=1)
-        na_b = np.take_along_axis(n_b, a_idx, axis=1)
-        nb_b = np.take_along_axis(n_b, b_idx, axis=1)
-
-        pf_b = elo_expected_frame(ra_b, rb_b)
-        pf_f = elo_expected_frame(ra_f, rb_f)
-        pm_b = p_win_match(pf_b, best_of)
-        pm_f = p_win_match(pf_f, best_of)
-
-        prob_a = elob_w * pm_b + (1 - elob_w) * pm_f          # blended match-win prob (matches Match Odds tab)
-        pf_blended = elob_w * pf_b + (1 - elob_w) * pf_f      # blended frame prob (drives scoreline sampling,
-                                                                # same convention as tab_handicap/tab_centuries)
-
-        a_wins = rng.random(prob_a.shape) < prob_a
-        p_win_frame = np.where(a_wins, pf_blended, 1 - pf_blended)
-        loser_frames = _sample_loser_frames(p_win_frame, first_to, rng).astype(np.float64)
-
-        a_frames = np.where(a_wins, float(first_to), loser_frames)
-        b_frames = np.where(a_wins, loser_frames, float(first_to))
-        total_frames = a_frames + b_frames
-        ratio_a = a_frames / total_frames
-        ratio_b = b_frames / total_frames
-
-        # ELO-beta update (match-outcome model, margin-of-victory + K-decay) — mirrors run_elo_beta
-        winner_rat_b = np.where(a_wins, ra_b, rb_b)
-        loser_rat_b = np.where(a_wins, rb_b, ra_b)
-        mov = np.log(np.abs(a_frames - b_frames) + 1) * (2.2 / ((winner_rat_b - loser_rat_b) * 0.001 + 2.2))
-        outcome_a = a_wins.astype(np.float64)
-        k1_b = OUTRIGHT_ELOB_K / (1 + OUTRIGHT_ELOB_K_DECAY * na_b)
-        k2_b = OUTRIGHT_ELOB_K / (1 + OUTRIGHT_ELOB_K_DECAY * nb_b)
-        delta_a_b = k1_b * mov * (outcome_a - pm_b)
-        delta_b_b = k2_b * mov * ((1 - outcome_a) - (1 - pm_b))
-
-        # ELO-frames update (frame-ratio model) — mirrors run_elo_frames
-        delta_a_f = OUTRIGHT_ELOF_K * (ratio_a - pf_f)
-        delta_b_f = OUTRIGHT_ELOF_K * (ratio_b - (1 - pf_f))
-
-        np.put_along_axis(rat_b, a_idx, ra_b + delta_a_b, axis=1)
-        np.put_along_axis(rat_b, b_idx, rb_b + delta_b_b, axis=1)
-        np.put_along_axis(rat_f, a_idx, ra_f + delta_a_f, axis=1)
-        np.put_along_axis(rat_f, b_idx, rb_f + delta_b_f, axis=1)
-        np.put_along_axis(n_b, a_idx, na_b + 1, axis=1)
-        np.put_along_axis(n_b, b_idx, nb_b + 1, axis=1)
-
-        occupant = np.where(a_wins, a_idx, b_idx)
-
-    champion_counts = np.bincount(occupant.ravel(), minlength=x_players)
-    finalist_counts = np.bincount(finalists.ravel(), minlength=x_players)
+    champion_counts = np.bincount(occupant.ravel(), minlength=r_size)
+    finalist_counts = np.bincount(finalists.ravel(), minlength=r_size)
     return champion_counts, finalist_counts
 
 
-def run_outright_simulation(bracket_players, first_to_by_round, n_sims, elob_w,
+def run_outright_simulation(roster, x_players, qualifiers, first_to_by_round, n_sims, elob_w,
                             ratings_elob, ratings_elof, progress_cb=None, seed=None):
     """Chunked orchestrator. Returns {"champion_prob": {...}, "finalist_prob": {...}, "n_sims": n}."""
-    x_players = len(bracket_players)
     rng = np.random.default_rng(seed)
-    champion_counts = np.zeros(x_players, dtype=np.int64)
-    finalist_counts = np.zeros(x_players, dtype=np.int64)
+    r_size = len(roster)
+    champion_counts = np.zeros(r_size, dtype=np.int64)
+    finalist_counts = np.zeros(r_size, dtype=np.int64)
 
     done = 0
     while done < n_sims:
         n_chunk = min(OUTRIGHT_CHUNK_SIZE, n_sims - done)
         champ, fin = _simulate_outright_chunk(
-            bracket_players, first_to_by_round, elob_w, ratings_elob, ratings_elof, n_chunk, rng)
+            roster, x_players, qualifiers, first_to_by_round,
+            elob_w, ratings_elob, ratings_elof, n_chunk, rng)
         champion_counts += champ
         finalist_counts += fin
         done += n_chunk
@@ -486,8 +516,8 @@ def run_outright_simulation(bracket_players, first_to_by_round, n_sims, elob_w,
             progress_cb(done, n_sims)
 
     return {
-        "champion_prob": {p: champion_counts[i] / n_sims for i, p in enumerate(bracket_players)},
-        "finalist_prob": {p: finalist_counts[i] / n_sims for i, p in enumerate(bracket_players)},
+        "champion_prob": {p: champion_counts[i] / n_sims for i, p in enumerate(roster)},
+        "finalist_prob": {p: finalist_counts[i] / n_sims for i, p in enumerate(roster)},
         "n_sims": n_sims,
     }
 
@@ -1034,6 +1064,32 @@ def commit_files_to_github(token, repo_name, branch, files: dict, message: str):
     new_commit = repo.create_git_commit(message, new_tree, [latest_commit])
     ref.edit(new_commit.sha)
     return new_commit.sha
+
+
+def load_saved_outright_brackets() -> dict:
+    """Named Outright bracket presets, keyed by name. Not st.cache_data'd — always read fresh
+    so a save in this session is immediately visible without waiting on a redeploy."""
+    try:
+        with open(OUTRIGHT_BRACKETS_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
+
+
+def save_outright_bracket(name: str, definition: dict):
+    """Writes the bracket locally (so it's usable this session even offline) and, if GitHub
+    is configured, commits it too (so it survives a redeploy / is visible to other sessions)."""
+    brackets = load_saved_outright_brackets()
+    brackets[name] = definition
+    data_bytes = json.dumps(brackets, indent=2).encode("utf-8")
+
+    with open(OUTRIGHT_BRACKETS_PATH, "wb") as f:
+        f.write(data_bytes)
+
+    token, repo_name, branch = _gh_config()
+    if _GITHUB_AVAILABLE and token:
+        msg = f"Save outright bracket '{name}' via app {datetime.utcnow():%Y-%m-%d %H:%M UTC}"
+        commit_files_to_github(token, repo_name, branch, {OUTRIGHT_BRACKETS_PATH: data_bytes}, msg)
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -1782,6 +1838,50 @@ def _outright_table_html(prob_dict: dict, edge_val: float) -> str:
         "</tr></thead><tbody>" + rows_html + "</tbody></table>"
     )
 
+def _outright_slot_keys(x, slot):
+    return (f"out_qtog_{x}_{slot}", f"out_p_{x}_{slot}", f"out_qa_{x}_{slot}", f"out_qb_{x}_{slot}")
+
+
+def _load_outright_bracket_into_state(definition: dict):
+    """Programmatically sets every widget's session_state entry from a saved bracket, then
+    reruns so the widgets pick the loaded values up as their initial state. Any player name
+    no longer present in sorted_players (e.g. renamed in a later ratings update) is skipped
+    with a warning rather than crashing the load."""
+    x = definition["x_players"]
+    unknown = set()
+
+    def _safe(name):
+        if name in sorted_players:
+            return name
+        unknown.add(name)
+        return sorted_players[0]
+
+    st.session_state["out_x"] = x
+    for r, ft in enumerate(definition.get("first_to_by_round", [])):
+        st.session_state[f"out_ft_{x}_{r}"] = int(ft)
+    qft = definition.get("qualifier_first_to")
+    if qft is not None:
+        st.session_state[f"out_qft_{x}"] = int(qft)
+
+    for slot, s in enumerate(definition.get("slots", [])):
+        tog_key, p_key, qa_key, qb_key = _outright_slot_keys(x, slot)
+        if s.get("mode") == "qualifier":
+            st.session_state[tog_key] = True
+            st.session_state[qa_key] = _safe(s["player_a"])
+            st.session_state[qb_key] = _safe(s["player_b"])
+        else:
+            st.session_state[tog_key] = False
+            st.session_state[p_key] = _safe(s["player"])
+
+    st.session_state["outright_result"] = None
+    if unknown:
+        st.session_state["out_load_warning"] = (
+            "Loaded, but these players are no longer in the ratings list and were reset: "
+            + ", ".join(sorted(unknown))
+        )
+    st.rerun()
+
+
 with tab_outright:
     st.markdown("### 🔱 Outright")
     st.markdown(
@@ -1789,6 +1889,21 @@ with tab_outright:
         "Monte Carlo knockout-bracket simulation. Ratings update match-by-match within each "
         "simulated run of the tournament. Uses the ELOb weight and edge target set at the top of the page."
         "</div>", unsafe_allow_html=True)
+
+    # ---- Load a saved bracket -------------------------------------------
+    st.markdown("<div class='section-cap'>SAVED BRACKETS</div>", unsafe_allow_html=True)
+    saved_brackets = load_saved_outright_brackets()
+    lc1, lc2 = st.columns([3, 1])
+    with lc1:
+        load_choice = st.selectbox("Load a saved bracket", ["— none —"] + sorted(saved_brackets.keys()),
+                                   key="out_load_choice", label_visibility="collapsed")
+    with lc2:
+        if st.button("LOAD", key="out_load_btn", disabled=(load_choice == "— none —"), use_container_width=True):
+            _load_outright_bracket_into_state(saved_brackets[load_choice])
+    if st.session_state.get("out_load_warning"):
+        st.warning(st.session_state.pop("out_load_warning"))
+
+    st.markdown("<hr class='divider'>", unsafe_allow_html=True)
 
     x_players = st.selectbox("NUMBER OF PLAYERS", [2, 4, 8, 16, 32, 64, 128], index=3, key="out_x")
     out_rounds = outright_round_plan(x_players)
@@ -1803,26 +1918,78 @@ with tab_outright:
             out_first_to.append(int(ft_i))
 
     st.markdown("<div class='section-cap' style='margin-top:16px;'>ROUND 1 MATCHUPS</div>", unsafe_allow_html=True)
+    st.markdown(
+        "<div style='font-size:10px;color:#444455;font-family:monospace;margin-bottom:8px;'>"
+        "Tick \"qualifier pending\" on a side that hasn't been decided yet — enter the two players "
+        "still to play it, and their winner carries their (post-qualifier) rating into Round 1.</div>",
+        unsafe_allow_html=True)
+
     n_out_matches = x_players // 2
-    out_bracket = [None] * x_players
+    out_bracket = [None] * x_players          # primary occupant per slot
+    out_qual_pending = []                      # list of (slot, other_player_name)
+
+    def _outright_side_input(slot, label, default_idx):
+        tog_key, p_key, qa_key, qb_key = _outright_slot_keys(x_players, slot)
+        pending = st.checkbox("qualifier pending", key=tog_key)
+        if pending:
+            qa = st.selectbox(f"{label} — Qualifier A", sorted_players, index=default_idx, key=qa_key)
+            qb = st.selectbox(f"{label} — Qualifier B", sorted_players,
+                              index=min(default_idx + 1, len(sorted_players) - 1), key=qb_key)
+            out_bracket[slot] = qa
+            out_qual_pending.append((slot, qb))
+        else:
+            p = st.selectbox(label, sorted_players, index=default_idx, key=p_key)
+            out_bracket[slot] = p
+
     for i in range(n_out_matches):
         c1, cvs, c2 = st.columns([4, 1, 4])
         d1 = min(2 * i, len(sorted_players) - 1)
         d2 = min(2 * i + 1, len(sorted_players) - 1)
         with c1:
-            p1 = st.selectbox(f"Match {i+1} — Player 1", sorted_players, index=d1,
-                              key=f"out_p_{x_players}_{i}_1")
+            _outright_side_input(2 * i, f"Match {i+1} — Player 1", d1)
         with cvs:
             st.markdown("<div style='text-align:center;padding-top:30px;color:#444455;font-family:monospace;'>vs</div>",
                        unsafe_allow_html=True)
         with c2:
-            p2 = st.selectbox(f"Match {i+1} — Player 2", sorted_players, index=d2,
-                              key=f"out_p_{x_players}_{i}_2")
-        out_bracket[2*i], out_bracket[2*i + 1] = p1, p2
+            _outright_side_input(2 * i + 1, f"Match {i+1} — Player 2", d2)
 
-    out_dupes = sorted({p for p in out_bracket if out_bracket.count(p) > 1})
+    out_qualifier_ft = None
+    if out_qual_pending:
+        out_qualifier_ft = st.selectbox(
+            "QUALIFIER FORMAT (FIRST TO) — applies to every pending qualifier above",
+            list(range(1, 19)), index=5, key=f"out_qft_{x_players}")
+
+    out_all_players = list(out_bracket) + [p for _, p in out_qual_pending]
+    out_dupes = sorted({p for p in out_all_players if out_all_players.count(p) > 1})
     if out_dupes:
         st.error(f"Duplicate player(s) in the bracket: {', '.join(out_dupes)}. Each player can only occupy one slot.")
+
+    # ---- Save this bracket ------------------------------------------------
+    st.markdown("<div class='section-cap' style='margin-top:16px;'>SAVE THIS BRACKET</div>", unsafe_allow_html=True)
+    sc1, sc2 = st.columns([3, 1])
+    with sc1:
+        save_name = st.text_input("Bracket name", key="out_save_name",
+                                  placeholder="e.g. World Championship 2027", label_visibility="collapsed")
+    with sc2:
+        save_clicked = st.button("SAVE", key="out_save_btn",
+                                 disabled=(not save_name.strip() or bool(out_dupes)), use_container_width=True)
+    if save_clicked:
+        qual_slots = {slot: other for slot, other in out_qual_pending}
+        definition = {
+            "x_players": x_players,
+            "first_to_by_round": out_first_to,
+            "qualifier_first_to": out_qualifier_ft,
+            "slots": [
+                {"mode": "qualifier", "player_a": out_bracket[s], "player_b": qual_slots[s]}
+                if s in qual_slots else {"mode": "confirmed", "player": out_bracket[s]}
+                for s in range(x_players)
+            ],
+        }
+        try:
+            save_outright_bracket(save_name.strip(), definition)
+            st.success(f"Saved bracket '{save_name.strip()}'.")
+        except Exception as e:
+            st.error(f"Could not save bracket: {e}")
 
     st.markdown("<div class='section-cap' style='margin-top:16px;'>SIMULATIONS</div>", unsafe_allow_html=True)
     n_sims_raw = st.number_input("Number of simulations (1 – 100,000)", min_value=1, max_value=100000,
@@ -1833,12 +2000,18 @@ with tab_outright:
     run_outright = st.button("RUN SIMULATION", key="out_run", disabled=bool(out_dupes))
 
     if run_outright:
+        out_roster = list(out_bracket)
+        out_qualifiers = []
+        for slot, other in out_qual_pending:
+            out_qualifiers.append({"slot": slot, "other_idx": len(out_roster), "first_to": out_qualifier_ft})
+            out_roster.append(other)
+
         out_progress = st.progress(0.0, text="Simulating…")
         def _out_cb(done, total):
             out_progress.progress(done / total, text=f"Simulated {done:,} / {total:,} tournaments…")
         out_result = run_outright_simulation(
-            out_bracket, out_first_to, out_n_sims, elob_w, ratings_elob, ratings_elof,
-            progress_cb=_out_cb)
+            out_roster, x_players, out_qualifiers, out_first_to, out_n_sims, elob_w,
+            ratings_elob, ratings_elof, progress_cb=_out_cb)
         out_progress.empty()
         st.session_state["outright_result"] = out_result
 
