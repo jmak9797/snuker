@@ -38,63 +38,104 @@ except Exception as e:                       # pragma: no cover
 # ── Page config ──────────────────────────────────────────────────────
 st.set_page_config(page_title="Match Predictor", page_icon="🎱", layout="wide")
 
-# ── Custom CSS ───────────────────────────────────────────────────────
-st.markdown("""
+# ── Theme (light/dark) ─────────────────────────────────────────────────
+# Every color elsewhere in the app (both the stylesheet below and the inline
+# f-string HTML built throughout the tabs) references one of these CSS custom
+# properties via var(--token) rather than a literal hex code, so this is the
+# single place that defines what each mode actually looks like. Light-mode
+# values were chosen to clear WCAG AA contrast (>=4.5:1) against their
+# background for every text token, not just eyeballed.
+THEME_DARK = {
+    "bg": "#13131f", "bg2": "#1e1e2e", "bg3": "#12121e",
+    "border": "#2a2a3a", "border_soft": "#1a1a2a",
+    "text": "#ffffff", "text_2": "#cccccc", "text_muted": "#888888",
+    "text_faint": "#444455", "text_faint2": "#555566",
+    "accent_a": "#4fc3f7", "accent_a_hover": "#81d4fa",
+    "accent_b": "#ef9a9a", "accent_match": "#b39ddb",
+    "positive": "#a5d6a7", "negative": "#ef5350", "bronze": "#cd7f32",
+    "won_row_bg": "#1a2a1a", "gold": "#ffd700", "silver": "#c0c0c0",
+}
+THEME_LIGHT = {
+    "bg": "#f4f5f9", "bg2": "#ffffff", "bg3": "#eceef4",
+    "border": "#d7dae3", "border_soft": "#e6e8ef",
+    "text": "#14141c", "text_2": "#33333f", "text_muted": "#5b5f70",
+    "text_faint": "#6b7086", "text_faint2": "#6f7488",
+    "accent_a": "#0369a1", "accent_a_hover": "#0284c7",
+    "accent_b": "#c2185b", "accent_match": "#6b3fa0",
+    "positive": "#1e7d34", "negative": "#c62828", "bronze": "#9a5b1f",
+    "won_row_bg": "#e7f3e8", "gold": "#8a6508", "silver": "#757575",
+}
+
+dark_mode = st.session_state.get("theme_dark_mode", True)   # widget itself renders in the header row below
+THEME = THEME_DARK if dark_mode else THEME_LIGHT
+
+# ── Custom CSS (all colors are var(--token) — values come from THEME above) ──
+st.markdown(f"""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;700&family=Rajdhani:wght@400;600;700&display=swap');
-    html, body, [class*="css"] { font-family: 'Rajdhani', sans-serif; background-color: #13131f; color: #ffffff; }
-    .stApp { background-color: #13131f; }
-    h1, h2, h3 { font-family: 'Rajdhani', sans-serif; }
-    .stTabs [data-baseweb="tab-list"] { background-color: #1e1e2e; border-radius: 8px; padding: 4px; gap: 4px; }
-    .stTabs [data-baseweb="tab"] { background-color: transparent; color: #888888; font-family: 'Rajdhani', sans-serif; font-weight: 600; font-size: 15px; letter-spacing: 1px; border-radius: 6px; padding: 8px 24px; }
-    .stTabs [aria-selected="true"] { background-color: #4fc3f7 !important; color: #13131f !important; }
-    .stTabs [data-baseweb="tab-panel"] { padding-top: 24px; }
-    .stSelectbox > div > div { background-color: #1e1e2e !important; border: 1px solid #2a2a3a !important; color: #ffffff !important; font-family: 'Rajdhani', sans-serif; }
-    .stSlider > div > div > div { background-color: #4fc3f7 !important; }
-    .stButton > button { background-color: #4fc3f7 !important; color: #13131f !important; font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 16px; border: none; padding: 10px 32px; border-radius: 4px; letter-spacing: 1px; }
-    .stButton > button:hover { background-color: #81d4fa !important; color: #13131f !important; }
-    .stTextInput > div > div > input { background-color: #1e1e2e !important; border: 1px solid #2a2a3a !important; color: #ffffff !important; font-family: 'IBM Plex Mono', monospace !important; font-size: 13px !important; padding: 4px 8px !important; border-radius: 4px !important; }
-    .metric-card { background-color: #1e1e2e; border-radius: 8px; padding: 16px; text-align: center; margin: 4px 0; }
-    .metric-cap { font-size: 10px; letter-spacing: 2px; color: #888888; margin-bottom: 4px; font-family: 'IBM Plex Mono', monospace; }
-    .metric-val { font-size: 32px; font-weight: 700; font-family: 'Rajdhani', sans-serif; }
-    .metric-val-lg { font-size: 38px; font-weight: 700; font-family: 'Rajdhani', sans-serif; }
-    .card-a { background-color: #1e1e2e; border: 2px solid #4fc3f7; border-radius: 10px; padding: 20px; }
-    .card-b { background-color: #1e1e2e; border: 2px solid #ef9a9a; border-radius: 10px; padding: 20px; }
-    .card-match { background-color: #1e1e2e; border: 2px solid #b39ddb; border-radius: 10px; padding: 20px; }
-    .card-upd { background-color: #1e1e2e; border: 2px solid #2a2a3a; border-radius: 10px; padding: 20px; }
-    .prob-bar-bg { background-color: #12121e; border-radius: 6px; height: 14px; width: 100%; margin: 8px 0 16px 0; }
-    .prob-bar-fill-a { background-color: #4fc3f7; border-radius: 6px; height: 14px; }
-    .prob-bar-fill-b { background-color: #ef9a9a; border-radius: 6px; height: 14px; }
-    .breakdown-row { display: flex; justify-content: space-between; font-size: 13px; color: #888888; padding: 4px 0; font-family: 'IBM Plex Mono', monospace; }
-    .breakdown-val { color: #ffffff; }
-    .divider { border: none; border-top: 1px solid #2a2a3a; margin: 10px 0; }
-    .section-cap { font-size: 9px; letter-spacing: 2px; color: #444455; font-family: 'IBM Plex Mono', monospace; margin-bottom: 6px; }
-    .match-info { text-align: center; color: #555566; font-size: 12px; font-family: 'IBM Plex Mono', monospace; padding: 8px 0; }
-    .player-name-a { font-size: 22px; font-weight: 700; color: #4fc3f7; font-family: 'Rajdhani', sans-serif; margin-bottom: 4px; }
-    .player-name-b { font-size: 22px; font-weight: 700; color: #ef9a9a; font-family: 'Rajdhani', sans-serif; margin-bottom: 4px; }
-    .player-name-match { font-size: 22px; font-weight: 700; color: #b39ddb; font-family: 'Rajdhani', sans-serif; margin-bottom: 4px; }
-    .cen-table { width: 100%; border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; font-size: 12px; margin-top: 8px; }
-    .cen-table th { color: #444455; font-size: 9px; letter-spacing: 2px; padding: 4px 8px; text-align: right; border-bottom: 1px solid #2a2a3a; }
-    .cen-table th:first-child { text-align: left; }
-    .cen-table td { padding: 4px 8px; color: #888888; text-align: right; border-bottom: 1px solid #1a1a2a; }
-    .cen-table td:first-child { text-align: left; color: #ffffff; }
-    .cen-table tr:last-child td { border-bottom: none; }
-    .ou-card { background-color: #12121e; border-radius: 8px; padding: 14px 16px; margin: 6px 0; }
-    .ou-label { font-size: 9px; letter-spacing: 2px; color: #444455; font-family: 'IBM Plex Mono', monospace; margin-bottom: 2px; }
-    .ou-prob { font-size: 20px; font-weight: 700; font-family: 'Rajdhani', sans-serif; }
-    .ou-odds { font-size: 12px; font-family: 'IBM Plex Mono', monospace; color: #888888; margin-top: 2px; }
-    .bet-table { width: 100%; border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; font-size: 12px; margin-top: 8px; }
-    .bet-table th { color: #444455; font-size: 9px; letter-spacing: 2px; padding: 8px 12px; text-align: left; border-bottom: 1px solid #2a2a3a; }
-    .bet-table td { padding: 8px 12px; color: #cccccc; text-align: left; border-bottom: 1px solid #1a1a2a; }
-    .bet-table tr:last-child td { border-bottom: none; }
-    .rank-table { width: 100%; border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; font-size: 13px; }
-    .rank-table th { color: #444455; font-size: 9px; letter-spacing: 2px; padding: 10px 16px; text-align: left; border-bottom: 2px solid #2a2a3a; position: sticky; top: 0; background: #13131f; }
-    .rank-table th.num { text-align: right; }
-    .rank-table td { padding: 9px 16px; border-bottom: 1px solid #1a1a2a; vertical-align: middle; }
-    .rank-table tr:last-child td { border-bottom: none; }
-    .rank-table tr:hover td { background-color: #1a1a2a; }
-    .upd-step { font-size: 11px; letter-spacing: 2px; color: #4fc3f7; font-family: 'IBM Plex Mono', monospace; margin: 4px 0; }
-    div[data-testid="stHorizontalBlock"] { gap: 16px; }
+    :root {{
+        --bg: {THEME['bg']}; --bg2: {THEME['bg2']}; --bg3: {THEME['bg3']};
+        --border: {THEME['border']}; --border-soft: {THEME['border_soft']};
+        --text: {THEME['text']}; --text-2: {THEME['text_2']}; --text-muted: {THEME['text_muted']};
+        --text-faint: {THEME['text_faint']}; --text-faint2: {THEME['text_faint2']};
+        --accent-a: {THEME['accent_a']}; --accent-a-hover: {THEME['accent_a_hover']};
+        --accent-b: {THEME['accent_b']}; --accent-match: {THEME['accent_match']};
+        --positive: {THEME['positive']}; --negative: {THEME['negative']}; --bronze: {THEME['bronze']};
+        --won-row-bg: {THEME['won_row_bg']}; --gold: {THEME['gold']}; --silver: {THEME['silver']};
+    }}
+    html, body, [class*="css"] {{ font-family: 'Rajdhani', sans-serif; background-color: var(--bg); color: var(--text); }}
+    .stApp {{ background-color: var(--bg); }}
+    h1, h2, h3 {{ font-family: 'Rajdhani', sans-serif; }}
+    .stTabs [data-baseweb="tab-list"] {{ background-color: var(--bg2); border-radius: 8px; padding: 4px; gap: 4px; }}
+    .stTabs [data-baseweb="tab"] {{ background-color: transparent; color: var(--text-muted); font-family: 'Rajdhani', sans-serif; font-weight: 600; font-size: 15px; letter-spacing: 1px; border-radius: 6px; padding: 8px 24px; }}
+    .stTabs [aria-selected="true"] {{ background-color: var(--accent-a) !important; color: var(--bg) !important; }}
+    .stTabs [data-baseweb="tab-panel"] {{ padding-top: 24px; }}
+    .stSelectbox > div > div {{ background-color: var(--bg2) !important; border: 1px solid var(--border) !important; color: var(--text) !important; font-family: 'Rajdhani', sans-serif; }}
+    .stSlider > div > div > div {{ background-color: var(--accent-a) !important; }}
+    .stButton > button {{ background-color: var(--accent-a) !important; color: var(--bg) !important; font-family: 'Rajdhani', sans-serif; font-weight: 700; font-size: 16px; border: none; padding: 10px 32px; border-radius: 4px; letter-spacing: 1px; }}
+    .stButton > button:hover {{ background-color: var(--accent-a-hover) !important; color: var(--bg) !important; }}
+    .stTextInput > div > div > input {{ background-color: var(--bg2) !important; border: 1px solid var(--border) !important; color: var(--text) !important; font-family: 'IBM Plex Mono', monospace !important; font-size: 13px !important; padding: 4px 8px !important; border-radius: 4px !important; }}
+    .metric-card {{ background-color: var(--bg2); border-radius: 8px; padding: 16px; text-align: center; margin: 4px 0; }}
+    .metric-cap {{ font-size: 10px; letter-spacing: 2px; color: var(--text-muted); margin-bottom: 4px; font-family: 'IBM Plex Mono', monospace; }}
+    .metric-val {{ font-size: 32px; font-weight: 700; font-family: 'Rajdhani', sans-serif; }}
+    .metric-val-lg {{ font-size: 38px; font-weight: 700; font-family: 'Rajdhani', sans-serif; }}
+    .card-a {{ background-color: var(--bg2); border: 2px solid var(--accent-a); border-radius: 10px; padding: 20px; }}
+    .card-b {{ background-color: var(--bg2); border: 2px solid var(--accent-b); border-radius: 10px; padding: 20px; }}
+    .card-match {{ background-color: var(--bg2); border: 2px solid var(--accent-match); border-radius: 10px; padding: 20px; }}
+    .card-upd {{ background-color: var(--bg2); border: 2px solid var(--border); border-radius: 10px; padding: 20px; }}
+    .prob-bar-bg {{ background-color: var(--bg3); border-radius: 6px; height: 14px; width: 100%; margin: 8px 0 16px 0; }}
+    .prob-bar-fill-a {{ background-color: var(--accent-a); border-radius: 6px; height: 14px; }}
+    .prob-bar-fill-b {{ background-color: var(--accent-b); border-radius: 6px; height: 14px; }}
+    .breakdown-row {{ display: flex; justify-content: space-between; font-size: 13px; color: var(--text-muted); padding: 4px 0; font-family: 'IBM Plex Mono', monospace; }}
+    .breakdown-val {{ color: var(--text); }}
+    .divider {{ border: none; border-top: 1px solid var(--border); margin: 10px 0; }}
+    .section-cap {{ font-size: 9px; letter-spacing: 2px; color: var(--text-faint); font-family: 'IBM Plex Mono', monospace; margin-bottom: 6px; }}
+    .match-info {{ text-align: center; color: var(--text-faint2); font-size: 12px; font-family: 'IBM Plex Mono', monospace; padding: 8px 0; }}
+    .player-name-a {{ font-size: 22px; font-weight: 700; color: var(--accent-a); font-family: 'Rajdhani', sans-serif; margin-bottom: 4px; }}
+    .player-name-b {{ font-size: 22px; font-weight: 700; color: var(--accent-b); font-family: 'Rajdhani', sans-serif; margin-bottom: 4px; }}
+    .player-name-match {{ font-size: 22px; font-weight: 700; color: var(--accent-match); font-family: 'Rajdhani', sans-serif; margin-bottom: 4px; }}
+    .cen-table {{ width: 100%; border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; font-size: 12px; margin-top: 8px; }}
+    .cen-table th {{ color: var(--text-faint); font-size: 9px; letter-spacing: 2px; padding: 4px 8px; text-align: right; border-bottom: 1px solid var(--border); }}
+    .cen-table th:first-child {{ text-align: left; }}
+    .cen-table td {{ padding: 4px 8px; color: var(--text-muted); text-align: right; border-bottom: 1px solid var(--border-soft); }}
+    .cen-table td:first-child {{ text-align: left; color: var(--text); }}
+    .cen-table tr:last-child td {{ border-bottom: none; }}
+    .ou-card {{ background-color: var(--bg3); border-radius: 8px; padding: 14px 16px; margin: 6px 0; }}
+    .ou-label {{ font-size: 9px; letter-spacing: 2px; color: var(--text-faint); font-family: 'IBM Plex Mono', monospace; margin-bottom: 2px; }}
+    .ou-prob {{ font-size: 20px; font-weight: 700; font-family: 'Rajdhani', sans-serif; }}
+    .ou-odds {{ font-size: 12px; font-family: 'IBM Plex Mono', monospace; color: var(--text-muted); margin-top: 2px; }}
+    .bet-table {{ width: 100%; border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; font-size: 12px; margin-top: 8px; }}
+    .bet-table th {{ color: var(--text-faint); font-size: 9px; letter-spacing: 2px; padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); }}
+    .bet-table td {{ padding: 8px 12px; color: var(--text-2); text-align: left; border-bottom: 1px solid var(--border-soft); }}
+    .bet-table tr:last-child td {{ border-bottom: none; }}
+    .rank-table {{ width: 100%; border-collapse: collapse; font-family: 'IBM Plex Mono', monospace; font-size: 13px; }}
+    .rank-table th {{ color: var(--text-faint); font-size: 9px; letter-spacing: 2px; padding: 10px 16px; text-align: left; border-bottom: 2px solid var(--border); position: sticky; top: 0; background: var(--bg); }}
+    .rank-table th.num {{ text-align: right; }}
+    .rank-table td {{ padding: 9px 16px; border-bottom: 1px solid var(--border-soft); vertical-align: middle; }}
+    .rank-table tr:last-child td {{ border-bottom: none; }}
+    .rank-table tr:hover td {{ background-color: var(--border-soft); }}
+    .upd-step {{ font-size: 11px; letter-spacing: 2px; color: var(--accent-a); font-family: 'IBM Plex Mono', monospace; margin: 4px 0; }}
+    div[data-testid="stHorizontalBlock"] {{ gap: 16px; }}
 </style>
 """, unsafe_allow_html=True)
 
@@ -179,7 +220,7 @@ def market_input_row(key_prefix, target_val, pa, pb, market, selection, line):
 def value_badge(mp_val, target_val, is_value):
     if mp_val is None:
         return ""
-    c = "#a5d6a7" if is_value else "#ef9a9a"
+    c = "var(--positive)" if is_value else "var(--accent-b)"
     icon = "✅ value" if is_value else "❌ no value"
     return (f"<div style='font-size:12px;font-weight:700;color:{c};"
             f"font-family:monospace;margin:2px 0 6px 0;'>"
@@ -1129,7 +1170,12 @@ except FileNotFoundError:
 # HEADER + SHARED CONTROLS
 # ════════════════════════════════════════════════════════════════════
 
-st.markdown("## 🎱 Match Predictor")
+_hc1, _hc2 = st.columns([10, 1.4])
+with _hc1:
+    st.markdown("## 🎱 Match Predictor")
+with _hc2:
+    st.markdown("<div style='padding-top:14px;'></div>", unsafe_allow_html=True)
+    st.toggle("🌙 Dark mode", value=True, key="theme_dark_mode")
 st.markdown("---")
 
 col_a, col_vs, col_b = st.columns([10, 1, 10])
@@ -1186,8 +1232,8 @@ def render_match_card(col, name, prob, true_o, edge_p,
                       m_elob, h_edge, color, bar_class, card_class, pa, pb, pkey):
     with col:
         bar_w = int(prob * 100)
-        name_class = "player-name-a" if color == "#4fc3f7" else "player-name-b"
-        matches_color = "#ef5350" if m_elob < 50 else "#ffffff"
+        name_class = "player-name-a" if color == "var(--accent-a)" else "player-name-b"
+        matches_color = "var(--negative)" if m_elob < 50 else "var(--text)"
         matches_weight = "700" if m_elob < 50 else "400"
         st.markdown(f"""
         <div class="{card_class}">
@@ -1211,7 +1257,7 @@ def render_match_card(col, name, prob, true_o, edge_p,
         """, unsafe_allow_html=True)
         mp_val, is_val = market_input_row(f"mo_{pkey}", edge_p, pa, pb, "Match Odds", name, 0)
         if mp_val is not None:
-            tgt_color = "#a5d6a7" if is_val else "#ef9a9a"
+            tgt_color = "var(--positive)" if is_val else "var(--accent-b)"
             st.markdown(
                 f"<div style='font-size:13px;font-weight:700;color:{tgt_color};"
                 f"font-family:monospace;margin-top:2px;'>"
@@ -1232,11 +1278,11 @@ with tab_match:
         render_match_card(ca, pa, r["prob_a"], r["true_a"], r["edge_a"],
                           r["elob_ra"], r["elof_ra"], r["elob_pfa"], r["elob_pa"],
                           r["elof_pfa"], r["elof_pa"], r["elob_ma"],
-                          st.session_state["edge"], "#4fc3f7", "prob-bar-fill-a", "card-a", pa, pb, "a")
+                          st.session_state["edge"], "var(--accent-a)", "prob-bar-fill-a", "card-a", pa, pb, "a")
         render_match_card(cb, pb, r["prob_b"], r["true_b"], r["edge_b"],
                           r["elob_rb"], r["elof_rb"], r["elob_pfb"], r["elob_pb"],
                           r["elof_pfb"], r["elof_pb"], r["elob_mb"],
-                          st.session_state["edge"], "#ef9a9a", "prob-bar-fill-b", "card-b", pa, pb, "b")
+                          st.session_state["edge"], "var(--accent-b)", "prob-bar-fill-b", "card-b", pa, pb, "b")
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -1247,22 +1293,22 @@ def _hcap_card_html(name, name_class, card_class, color, lines_data):
     rows = ""
     for label, prob, true_o, tgt_o, bar_w in lines_data:
         rows += (
-            f"<div style='display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #1a1a2a;'>"
-            f"<div style='font-family:monospace;font-size:13px;color:#fff;width:52px;flex-shrink:0;'>{label}</div>"
-            f"<div style='flex:1;background:#12121e;border-radius:4px;height:10px;'>"
+            f"<div style='display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border-soft);'>"
+            f"<div style='font-family:monospace;font-size:13px;color:var(--text);width:52px;flex-shrink:0;'>{label}</div>"
+            f"<div style='flex:1;background:var(--bg3);border-radius:4px;height:10px;'>"
             f"<div style='background:{color};border-radius:4px;height:10px;width:{bar_w}%;'></div></div>"
             f"<div style='font-size:15px;font-weight:700;color:{color};width:52px;text-align:right;flex-shrink:0;'>{prob*100:.1f}%</div>"
             f"<div style='font-size:16px;font-weight:700;color:{color};width:60px;text-align:right;flex-shrink:0;'>{tgt_o:.3f}</div>"
-            f"<div style='font-size:11px;color:#555566;width:54px;text-align:right;flex-shrink:0;'>{true_o:.3f}</div>"
+            f"<div style='font-size:11px;color:var(--text-faint2);width:54px;text-align:right;flex-shrink:0;'>{true_o:.3f}</div>"
             f"</div>"
         )
     if not rows:
-        rows = "<div style='text-align:center;color:#555566;font-size:12px;padding:16px 0;'>No lines in range for this match length.</div>"
+        rows = "<div style='text-align:center;color:var(--text-faint2);font-size:12px;padding:16px 0;'>No lines in range for this match length.</div>"
     return (
         f"<div class='{card_class}'><div class='{name_class}'>{name}</div><hr class='divider'>"
         f"<div style='display:flex;justify-content:flex-end;gap:8px;margin-bottom:2px;'>"
         f"<span style='font-size:9px;color:{color};font-weight:700;letter-spacing:1px;width:60px;text-align:right;'>TARGET</span>"
-        f"<span style='font-size:9px;color:#444455;letter-spacing:1px;width:54px;text-align:right;'>TRUE</span>"
+        f"<span style='font-size:9px;color:var(--text-faint);letter-spacing:1px;width:54px;text-align:right;'>TRUE</span>"
         f"</div>" + rows + "</div>"
     )
 
@@ -1303,27 +1349,27 @@ with tab_handicap:
         col_ha, col_hb = st.columns(2)
 
         with col_ha:
-            st.markdown(_hcap_card_html(pa, "player-name-a", "card-a", "#4fc3f7", lines_a), unsafe_allow_html=True)
+            st.markdown(_hcap_card_html(pa, "player-name-a", "card-a", "var(--accent-a)", lines_a), unsafe_allow_html=True)
             st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
             for label, prob, true_o, tgt_o, _ in lines_a:
                 safe = label.replace(".", "_").replace("+", "p").replace("-", "m")
-                st.markdown(f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-top:6px;'>{pa} {label}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='font-size:10px;color:var(--text-faint);font-family:monospace;margin-top:6px;'>{pa} {label}</div>", unsafe_allow_html=True)
                 mp_val, is_val = market_input_row(f"ha_{safe}", tgt_o, pa, pb, "Handicap", f"{pa} {label}", label)
                 if mp_val is not None:
                     st.markdown(value_badge(mp_val, tgt_o, is_val), unsafe_allow_html=True)
 
         with col_hb:
-            st.markdown(_hcap_card_html(pb, "player-name-b", "card-b", "#ef9a9a", lines_b), unsafe_allow_html=True)
+            st.markdown(_hcap_card_html(pb, "player-name-b", "card-b", "var(--accent-b)", lines_b), unsafe_allow_html=True)
             st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
             for label, prob, true_o, tgt_o, _ in lines_b:
                 safe = label.replace(".", "_").replace("+", "p").replace("-", "m")
-                st.markdown(f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-top:6px;'>{pb} {label}</div>", unsafe_allow_html=True)
+                st.markdown(f"<div style='font-size:10px;color:var(--text-faint);font-family:monospace;margin-top:6px;'>{pb} {label}</div>", unsafe_allow_html=True)
                 mp_val, is_val = market_input_row(f"hb_{safe}", tgt_o, pa, pb, "Handicap", f"{pb} {label}", label)
                 if mp_val is not None:
                     st.markdown(value_badge(mp_val, tgt_o, is_val), unsafe_allow_html=True)
 
         st.markdown(
-            "<div style='margin-top:16px;font-family:monospace;font-size:10px;color:#444455;text-align:center;'>"
+            "<div style='margin-top:16px;font-family:monospace;font-size:10px;color:var(--text-faint);text-align:center;'>"
             "handicap on each player's frame score &nbsp;·&nbsp; lines &lt;5% or &gt;95% hidden</div>",
             unsafe_allow_html=True)
 
@@ -1339,7 +1385,7 @@ def _ou_html(color, ou, line, cen_edge):
     utgt = ut * (1 + cen_edge)
     return (
         f"<div style='margin-bottom:6px;'>"
-        f"<div style='font-size:10px;letter-spacing:2px;color:#444455;font-family:monospace;margin-bottom:6px;'>LINE &nbsp;{line}</div>"
+        f"<div style='font-size:10px;letter-spacing:2px;color:var(--text-faint);font-family:monospace;margin-bottom:6px;'>LINE &nbsp;{line}</div>"
         f"<div style='display:flex;gap:8px;'>"
         f"<div class='ou-card' style='flex:1;border-left:3px solid {color};'>"
         f"<div class='ou-label'>OVER {line}</div>"
@@ -1347,10 +1393,10 @@ def _ou_html(color, ou, line, cen_edge):
         f"<div style='font-size:20px;font-weight:700;color:{color};margin:4px 0 2px;'>{otgt:.3f}</div>"
         f"<div class='ou-odds'>true {ot:.3f}</div>"
         f"</div>"
-        f"<div class='ou-card' style='flex:1;border-left:3px solid #444455;'>"
+        f"<div class='ou-card' style='flex:1;border-left:3px solid var(--text-faint);'>"
         f"<div class='ou-label'>UNDER {line}</div>"
-        f"<div class='ou-prob' style='color:#888888;'>{ou['under']*100:.1f}%</div>"
-        f"<div style='font-size:20px;font-weight:700;color:#888888;margin:4px 0 2px;'>{utgt:.3f}</div>"
+        f"<div class='ou-prob' style='color:var(--text-muted);'>{ou['under']*100:.1f}%</div>"
+        f"<div style='font-size:20px;font-weight:700;color:var(--text-muted);margin:4px 0 2px;'>{utgt:.3f}</div>"
         f"<div class='ou-odds'>true {ut:.3f}</div>"
         f"</div></div></div>"
     )
@@ -1364,10 +1410,10 @@ def _dist_html(dist, color, cen_edge):
         tgt = to * (1 + cen_edge)
         rows += (
             f"<tr><td>{label}</td>"
-            f"<td><div style='background:#12121e;border-radius:3px;height:8px;width:100%;'>"
+            f"<td><div style='background:var(--bg3);border-radius:3px;height:8px;width:100%;'>"
             f"<div style='background:{color};border-radius:3px;height:8px;width:{bw}%;'></div></div></td>"
             f"<td>{v*100:.2f}%</td>"
-            f"<td style='color:#888888;'>{to:.2f}</td>"
+            f"<td style='color:var(--text-muted);'>{to:.2f}</td>"
             f"<td style='color:{color};font-weight:700;'>{tgt:.2f}</td>"
             f"</tr>"
         )
@@ -1395,11 +1441,11 @@ def _cen_col(col, name, name_class, card_class, color, ou, line, dist, cen_edge,
         )
         ot = (1/ou["over"]) * (1+cen_edge) if ou["over"] > 0 else float("inf")
         ut = (1/ou["under"]) * (1+cen_edge) if ou["under"] > 0 else float("inf")
-        st.markdown(f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-top:8px;'>OVER {line}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='font-size:10px;color:var(--text-faint);font-family:monospace;margin-top:8px;'>OVER {line}</div>", unsafe_allow_html=True)
         mv, iv = market_input_row(f"{pkey}_o", ot, pa, pb, "Centuries", f"{name} Over {line}", line)
         if mv is not None:
             st.markdown(value_badge(mv, ot, iv), unsafe_allow_html=True)
-        st.markdown(f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-top:4px;'>UNDER {line}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='font-size:10px;color:var(--text-faint);font-family:monospace;margin-top:4px;'>UNDER {line}</div>", unsafe_allow_html=True)
         mv, iv = market_input_row(f"{pkey}_u", ut, pa, pb, "Centuries", f"{name} Under {line}", line)
         if mv is not None:
             st.markdown(value_badge(mv, ut, iv), unsafe_allow_html=True)
@@ -1438,9 +1484,9 @@ with tab_centuries:
         cen_rate_a = player_rates.get(pa, 0.0) or 0.0
         cen_rate_b = player_rates.get(pb, 0.0) or 0.0
 
-        _cen_col(col_ca, pa, "player-name-a", "card-a", "#4fc3f7", ou_a, line_a, cen_result[pa], cen_edge, cen_rate_a, pa, pb, "ca")
-        _cen_col(col_cb, pb, "player-name-b", "card-b", "#ef9a9a", ou_b, line_b, cen_result[pb], cen_edge, cen_rate_b, pa, pb, "cb")
-        _cen_col(col_cm, "MATCH TOTAL", "player-name-match", "card-match", "#b39ddb", ou_m, line_m, cen_result["match"], cen_edge, 0.0, pa, pb, "cm")
+        _cen_col(col_ca, pa, "player-name-a", "card-a", "var(--accent-a)", ou_a, line_a, cen_result[pa], cen_edge, cen_rate_a, pa, pb, "ca")
+        _cen_col(col_cb, pb, "player-name-b", "card-b", "var(--accent-b)", ou_b, line_b, cen_result[pb], cen_edge, cen_rate_b, pa, pb, "cb")
+        _cen_col(col_cm, "MATCH TOTAL", "player-name-match", "card-match", "var(--accent-match)", ou_m, line_m, cen_result["match"], cen_edge, 0.0, pa, pb, "cm")
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -1455,7 +1501,7 @@ with tab_betslip:
 
     if df.empty:
         st.markdown(
-            "<div style='text-align:center;color:#444455;font-family:monospace;font-size:13px;padding:32px 0;'>"
+            "<div style='text-align:center;color:var(--text-faint);font-family:monospace;font-size:13px;padding:32px 0;'>"
             "No bets added yet. Use the ＋ buttons in each tab.</div>",
             unsafe_allow_html=True)
     else:
@@ -1470,22 +1516,22 @@ with tab_betslip:
         for i, row in df.iterrows():
             mp = float(row["Market Price"])
             tgt = float(row["Target"])
-            mp_color = "#a5d6a7" if mp > tgt else "#ef9a9a"
+            mp_color = "var(--positive)" if mp > tgt else "var(--accent-b)"
             kelly = row.get("Kelly Stake %", "")
             rows_html += (
                 f"<tr><td>{i+1}</td>"
                 f"<td>{row['Player 1']}</td><td>{row['Player 2']}</td>"
                 f"<td>{row['Market']}</td><td>{row['Selection']}</td>"
                 f"<td>{row['Line']}</td>"
-                f"<td style='color:#4fc3f7;font-weight:700;'>{tgt:.3f}</td>"
+                f"<td style='color:var(--accent-a);font-weight:700;'>{tgt:.3f}</td>"
                 f"<td style='color:{mp_color};font-weight:700;'>{mp:.3f}</td>"
-                f"<td style='color:#b39ddb;font-weight:700;'>{kelly}</td>"
+                f"<td style='color:var(--accent-match);font-weight:700;'>{kelly}</td>"
                 f"</tr>"
             )
         st.markdown(header + rows_html + "</tbody></table>", unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
-        st.markdown("<div style='font-size:10px;color:#444455;font-family:monospace;'>Select rows to remove:</div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-size:10px;color:var(--text-faint);font-family:monospace;'>Select rows to remove:</div>", unsafe_allow_html=True)
         check_cols = st.columns(min(len(df), 12))
         for i, row in df.iterrows():
             with check_cols[i % len(check_cols)]:
@@ -1523,23 +1569,23 @@ def _results_table_html(df_in: pd.DataFrame, color: str) -> str:
     rows_html = ""
     for _, row in df_in.iterrows():
         won = float(row.get("player_score", 0)) > float(row.get("opposition_score", 0))
-        bg  = "background:#1a2a1a;" if won else ""
+        bg  = "background:var(--won-row-bg);" if won else ""
         delta = row.get("player_delta", 0)
-        delta_color = "#a5d6a7" if delta > 0 else "#ef9a9a"
+        delta_color = "var(--positive)" if delta > 0 else "var(--accent-b)"
         pm = int(row.get("player_matches_played", 0))
-        pm_style = "color:#ef5350;font-weight:700;" if pm < 50 else "color:#cccccc;"
+        pm_style = "color:var(--negative);font-weight:700;" if pm < 50 else "color:var(--text-2);"
         om = int(row.get("oppo_matches_played", 0))
-        om_style = "color:#ef5350;font-weight:700;" if om < 50 else "color:#cccccc;"
+        om_style = "color:var(--negative);font-weight:700;" if om < 50 else "color:var(--text-2);"
         rows_html += (
             f"<tr style='{bg}'>"
             f"<td>{row.get('match_date','')}</td>"
-            f"<td style='color:#cccccc;'>{row.get('tournament_name','')}</td>"
+            f"<td style='color:var(--text-2);'>{row.get('tournament_name','')}</td>"
             f"<td>{row.get('round_name','')}</td>"
             f"<td style='color:{color};font-weight:700;'>{row.get('opposition_name','')}</td>"
-            f"<td style='color:#ffffff;font-weight:700;'>{row.get('player_score','')}</td>"
+            f"<td style='color:var(--text);font-weight:700;'>{row.get('player_score','')}</td>"
             f"<td>{row.get('opposition_score','')}</td>"
-            f"<td style='color:#4fc3f7;'>{row.get('player_rating', 0):.1f}</td>"
-            f"<td style='color:#888888;'>{row.get('oppo_rating', 0):.1f}</td>"
+            f"<td style='color:var(--accent-a);'>{row.get('player_rating', 0):.1f}</td>"
+            f"<td style='color:var(--text-muted);'>{row.get('oppo_rating', 0):.1f}</td>"
             f"<td>{row.get('player_prob', 0):.1%}</td>"
             f"<td style='color:{delta_color};font-weight:700;'>{delta:+.3f}</td>"
             f"<td style='{pm_style}'>{pm}</td>"
@@ -1560,16 +1606,16 @@ def _h2h_table_html(df_in: pd.DataFrame, pa: str, color_a: str, color_b: str) ->
         is_pa = row["player_name"] == pa
         color = color_a if is_pa else color_b
         won = float(row.get("player_score", 0)) > float(row.get("opposition_score", 0))
-        bg  = "background:#1a2a1a;" if won else ""
+        bg  = "background:var(--won-row-bg);" if won else ""
         delta = row.get("player_delta", 0)
-        delta_color = "#a5d6a7" if delta > 0 else "#ef9a9a"
+        delta_color = "var(--positive)" if delta > 0 else "var(--accent-b)"
         rows_html += (
             f"<tr style='{bg}'>"
             f"<td>{row.get('match_date','')}</td>"
-            f"<td style='color:#cccccc;'>{row.get('tournament_name','')}</td>"
+            f"<td style='color:var(--text-2);'>{row.get('tournament_name','')}</td>"
             f"<td>{row.get('round_name','')}</td>"
             f"<td style='color:{color};font-weight:700;'>{row.get('player_name','')}</td>"
-            f"<td style='color:#ffffff;font-weight:700;'>{row.get('player_score','')}</td>"
+            f"<td style='color:var(--text);font-weight:700;'>{row.get('player_score','')}</td>"
             f"<td>{row.get('opposition_score','')}</td>"
             f"<td>{row.get('player_prob', 0):.1%}</td>"
             f"<td style='color:{delta_color};font-weight:700;'>{delta:+.3f}</td>"
@@ -1591,11 +1637,11 @@ def _rating_chart(df_player: pd.DataFrame, name: str, color: str):
         hovertemplate="%{x}<br>Rating: %{y:.1f}<extra></extra>",
     ))
     fig.update_layout(
-        paper_bgcolor="#13131f", plot_bgcolor="#1e1e2e",
-        font=dict(family="IBM Plex Mono", color="#888888", size=11),
+        paper_bgcolor=THEME["bg"], plot_bgcolor=THEME["bg2"],
+        font=dict(family="IBM Plex Mono", color=THEME["text_muted"], size=11),
         margin=dict(l=40, r=20, t=30, b=40), height=220,
-        xaxis=dict(gridcolor="#2a2a3a", showgrid=True, zeroline=False),
-        yaxis=dict(gridcolor="#2a2a3a", showgrid=True, zeroline=False),
+        xaxis=dict(gridcolor=THEME["border"], showgrid=True, zeroline=False),
+        yaxis=dict(gridcolor=THEME["border"], showgrid=True, zeroline=False),
         showlegend=False,
         title=dict(text=f"{name} — Rating History", font=dict(color=color, size=13), x=0),
     )
@@ -1616,20 +1662,20 @@ with tab_results:
             if df_a.empty:
                 st.markdown(f"<div class='match-info'>No results found for {pa}.</div>", unsafe_allow_html=True)
             else:
-                st.plotly_chart(_rating_chart(df_a, pa, "#4fc3f7"), use_container_width=True, config={"displayModeBar": False})
+                st.plotly_chart(_rating_chart(df_a, pa, THEME["accent_a"]), use_container_width=True, config={"displayModeBar": False})
                 df_a_recent = df_a.head(n_results)
-                st.markdown(f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-bottom:6px;'>LAST {len(df_a_recent)} RESULTS</div>", unsafe_allow_html=True)
-                st.markdown(_results_table_html(df_a_recent, "#ef9a9a"), unsafe_allow_html=True)
+                st.markdown(f"<div style='font-size:10px;color:var(--text-faint);font-family:monospace;margin-bottom:6px;'>LAST {len(df_a_recent)} RESULTS</div>", unsafe_allow_html=True)
+                st.markdown(_results_table_html(df_a_recent, "var(--accent-b)"), unsafe_allow_html=True)
 
         with sub_pb:
             df_b = match_df[match_df["player_name"] == pb].sort_values("match_date", ascending=False)
             if df_b.empty:
                 st.markdown(f"<div class='match-info'>No results found for {pb}.</div>", unsafe_allow_html=True)
             else:
-                st.plotly_chart(_rating_chart(df_b, pb, "#ef9a9a"), use_container_width=True, config={"displayModeBar": False})
+                st.plotly_chart(_rating_chart(df_b, pb, THEME["accent_b"]), use_container_width=True, config={"displayModeBar": False})
                 df_b_recent = df_b.head(n_results)
-                st.markdown(f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-bottom:6px;'>LAST {len(df_b_recent)} RESULTS</div>", unsafe_allow_html=True)
-                st.markdown(_results_table_html(df_b_recent, "#4fc3f7"), unsafe_allow_html=True)
+                st.markdown(f"<div style='font-size:10px;color:var(--text-faint);font-family:monospace;margin-bottom:6px;'>LAST {len(df_b_recent)} RESULTS</div>", unsafe_allow_html=True)
+                st.markdown(_results_table_html(df_b_recent, "var(--accent-a)"), unsafe_allow_html=True)
 
         with sub_h2h:
             h2h_df = match_df[
@@ -1645,19 +1691,19 @@ with tab_results:
                 total_matches = len(h2h_df) // 2
                 st.markdown(
                     f"<div style='display:flex;gap:24px;align-items:center;margin-bottom:16px;'>"
-                    f"<div style='background:#1e1e2e;border:2px solid #4fc3f7;border-radius:8px;padding:14px 24px;text-align:center;'>"
-                    f"<div style='font-size:9px;letter-spacing:2px;color:#444455;font-family:monospace;margin-bottom:4px;'>WINS</div>"
-                    f"<div style='font-size:36px;font-weight:700;color:#4fc3f7;font-family:Rajdhani,sans-serif;'>{wins_a}</div>"
-                    f"<div style='font-size:13px;color:#4fc3f7;font-family:Rajdhani,sans-serif;'>{pa}</div></div>"
-                    f"<div style='font-size:22px;color:#444455;font-family:Rajdhani,sans-serif;font-weight:700;'>vs</div>"
-                    f"<div style='background:#1e1e2e;border:2px solid #ef9a9a;border-radius:8px;padding:14px 24px;text-align:center;'>"
-                    f"<div style='font-size:9px;letter-spacing:2px;color:#444455;font-family:monospace;margin-bottom:4px;'>WINS</div>"
-                    f"<div style='font-size:36px;font-weight:700;color:#ef9a9a;font-family:Rajdhani,sans-serif;'>{wins_b}</div>"
-                    f"<div style='font-size:13px;color:#ef9a9a;font-family:Rajdhani,sans-serif;'>{pb}</div></div>"
-                    f"<div style='font-size:11px;color:#444455;font-family:monospace;'>{total_matches} matches</div>"
+                    f"<div style='background:var(--bg2);border:2px solid var(--accent-a);border-radius:8px;padding:14px 24px;text-align:center;'>"
+                    f"<div style='font-size:9px;letter-spacing:2px;color:var(--text-faint);font-family:monospace;margin-bottom:4px;'>WINS</div>"
+                    f"<div style='font-size:36px;font-weight:700;color:var(--accent-a);font-family:Rajdhani,sans-serif;'>{wins_a}</div>"
+                    f"<div style='font-size:13px;color:var(--accent-a);font-family:Rajdhani,sans-serif;'>{pa}</div></div>"
+                    f"<div style='font-size:22px;color:var(--text-faint);font-family:Rajdhani,sans-serif;font-weight:700;'>vs</div>"
+                    f"<div style='background:var(--bg2);border:2px solid var(--accent-b);border-radius:8px;padding:14px 24px;text-align:center;'>"
+                    f"<div style='font-size:9px;letter-spacing:2px;color:var(--text-faint);font-family:monospace;margin-bottom:4px;'>WINS</div>"
+                    f"<div style='font-size:36px;font-weight:700;color:var(--accent-b);font-family:Rajdhani,sans-serif;'>{wins_b}</div>"
+                    f"<div style='font-size:13px;color:var(--accent-b);font-family:Rajdhani,sans-serif;'>{pb}</div></div>"
+                    f"<div style='font-size:11px;color:var(--text-faint);font-family:monospace;'>{total_matches} matches</div>"
                     f"</div>",
                     unsafe_allow_html=True)
-                st.markdown(_h2h_table_html(h2h_df.head(n_results * 2), pa, "#4fc3f7", "#ef9a9a"), unsafe_allow_html=True)
+                st.markdown(_h2h_table_html(h2h_df.head(n_results * 2), pa, "var(--accent-a)", "var(--accent-b)"), unsafe_allow_html=True)
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -1667,7 +1713,7 @@ with tab_results:
 with tab_multi:
     st.markdown("### 🎯 Multi Match")
     st.markdown(
-        "<div style='font-size:11px;color:#888888;font-family:monospace;margin-bottom:12px;'>"
+        "<div style='font-size:11px;color:var(--text-muted);font-family:monospace;margin-bottom:12px;'>"
         "Price several matches at once. ELOb weight and Edge below apply to every match."
         "</div>", unsafe_allow_html=True)
 
@@ -1699,7 +1745,7 @@ with tab_multi:
         head_cols = st.columns([0.4, 3, 3, 1.2])
         labels = ["#", "PLAYER 1", "PLAYER 2", "FIRST TO"]
     for c, lab in zip(head_cols, labels):
-        c.markdown(f"<div style='font-size:9px;letter-spacing:2px;color:#444455;"
+        c.markdown(f"<div style='font-size:9px;letter-spacing:2px;color:var(--text-faint);"
                    f"font-family:monospace;padding-top:8px;'>{lab}</div>",
                    unsafe_allow_html=True)
 
@@ -1710,7 +1756,7 @@ with tab_multi:
         else:
             cc = st.columns([0.4, 3, 3, 1.2])
         cc[0].markdown(
-            f"<div style='font-family:monospace;color:#4fc3f7;font-weight:700;"
+            f"<div style='font-family:monospace;color:var(--accent-a);font-weight:700;"
             f"padding-top:12px;'>{i+1}</div>", unsafe_allow_html=True)
         pa_i = cc[1].selectbox("p1", sorted_players, index=0,
                                key=f"mm_p1_{i}", label_visibility="collapsed")
@@ -1776,37 +1822,37 @@ with tab_multi:
                 span = 5 if not century_out else 8
                 body += (
                     f"<tr><td>{r['idx']}</td>"
-                    f"<td style='color:#4fc3f7;'>{r['pa']}</td>"
-                    f"<td style='color:#ef9a9a;'>{r['pb']}</td>"
-                    f"<td colspan='{span}' style='color:#cd7f32;'>⚠ pick two different players</td></tr>"
+                    f"<td style='color:var(--accent-a);'>{r['pa']}</td>"
+                    f"<td style='color:var(--accent-b);'>{r['pb']}</td>"
+                    f"<td colspan='{span}' style='color:var(--bronze);'>⚠ pick two different players</td></tr>"
                 )
                 continue
             common = (
                 f"<tr><td>{r['idx']}</td>"
-                f"<td style='color:#4fc3f7;font-weight:700;'>{r['pa']}</td>"
-                f"<td style='color:#ef9a9a;font-weight:700;'>{r['pb']}</td>"
+                f"<td style='color:var(--accent-a);font-weight:700;'>{r['pa']}</td>"
+                f"<td style='color:var(--accent-b);font-weight:700;'>{r['pb']}</td>"
                 f"<td>{r['ft']}</td>"
-                f"<td style='color:#4fc3f7;font-weight:700;'>{_tp(r['tp1'])}</td>"
-                f"<td style='color:#ef9a9a;font-weight:700;'>{_tp(r['tp2'])}</td>"
+                f"<td style='color:var(--accent-a);font-weight:700;'>{_tp(r['tp1'])}</td>"
+                f"<td style='color:var(--accent-b);font-weight:700;'>{_tp(r['tp2'])}</td>"
             )
             if century_out:
                 ln = r["line"]
                 common += (
-                    f"<td style='color:#888888;'>{ln:.1f}</td>"
-                    f"<td style='color:#b39ddb;font-weight:700;'>O{ln:.1f}&nbsp;&nbsp;{_tp(r.get('over_tp'))}</td>"
-                    f"<td style='color:#b39ddb;font-weight:700;'>U{ln:.1f}&nbsp;&nbsp;{_tp(r.get('under_tp'))}</td>"
+                    f"<td style='color:var(--text-muted);'>{ln:.1f}</td>"
+                    f"<td style='color:var(--accent-match);font-weight:700;'>O{ln:.1f}&nbsp;&nbsp;{_tp(r.get('over_tp'))}</td>"
+                    f"<td style='color:var(--accent-match);font-weight:700;'>U{ln:.1f}&nbsp;&nbsp;{_tp(r.get('under_tp'))}</td>"
                 )
             common += "</tr>"
             body += common
 
         st.markdown(header + body + "</tbody></table>", unsafe_allow_html=True)
         st.markdown(
-            "<div style='font-size:10px;color:#444455;font-family:monospace;margin-top:8px;'>"
+            "<div style='font-size:10px;color:var(--text-faint);font-family:monospace;margin-top:8px;'>"
             "Target price = true odds × (1 + edge). Centuries O/U is on the match total.</div>",
             unsafe_allow_html=True)
     else:
         st.markdown(
-            "<div style='text-align:center;color:#444455;font-family:monospace;"
+            "<div style='text-align:center;color:var(--text-faint);font-family:monospace;"
             "font-size:13px;padding:24px 0;'>Enter your matches and press RUN PREDICTIONS</div>",
             unsafe_allow_html=True)
 
@@ -1826,10 +1872,10 @@ def _outright_table_html(prob_dict: dict, edge_val: float) -> str:
             tgt = true_o * (1 + edge_val)
             true_o_s, tgt_s = f"{true_o:.2f}", f"{tgt:.2f}"
         rows_html += (
-            f"<tr><td style='color:#ffffff;font-weight:600;font-family:Rajdhani,sans-serif;font-size:15px;'>{player}</td>"
+            f"<tr><td style='color:var(--text);font-weight:600;font-family:Rajdhani,sans-serif;font-size:15px;'>{player}</td>"
             f"<td style='text-align:right;'>{prob*100:.2f}%</td>"
-            f"<td style='text-align:right;color:#888888;'>{true_o_s}</td>"
-            f"<td style='text-align:right;color:#4fc3f7;font-weight:700;'>{tgt_s}</td>"
+            f"<td style='text-align:right;color:var(--text-muted);'>{true_o_s}</td>"
+            f"<td style='text-align:right;color:var(--accent-a);font-weight:700;'>{tgt_s}</td>"
             f"</tr>"
         )
     return (
@@ -1885,7 +1931,7 @@ def _load_outright_bracket_into_state(definition: dict):
 with tab_outright:
     st.markdown("### 🔱 Outright")
     st.markdown(
-        "<div style='font-size:11px;color:#888888;font-family:monospace;margin-bottom:12px;'>"
+        "<div style='font-size:11px;color:var(--text-muted);font-family:monospace;margin-bottom:12px;'>"
         "Monte Carlo knockout-bracket simulation. Ratings update match-by-match within each "
         "simulated run of the tournament. Uses the ELOb weight and edge target set at the top of the page."
         "</div>", unsafe_allow_html=True)
@@ -1919,7 +1965,7 @@ with tab_outright:
 
     st.markdown("<div class='section-cap' style='margin-top:16px;'>ROUND 1 MATCHUPS</div>", unsafe_allow_html=True)
     st.markdown(
-        "<div style='font-size:10px;color:#444455;font-family:monospace;margin-bottom:8px;'>"
+        "<div style='font-size:10px;color:var(--text-faint);font-family:monospace;margin-bottom:8px;'>"
         "Tick \"qualifier pending\" on a side that hasn't been decided yet — enter the two players "
         "still to play it, and their winner carries their (post-qualifier) rating into Round 1.</div>",
         unsafe_allow_html=True)
@@ -1948,7 +1994,7 @@ with tab_outright:
         with c1:
             _outright_side_input(2 * i, f"Match {i+1} — Player 1", d1)
         with cvs:
-            st.markdown("<div style='text-align:center;padding-top:30px;color:#444455;font-family:monospace;'>vs</div>",
+            st.markdown("<div style='text-align:center;padding-top:30px;color:var(--text-faint);font-family:monospace;'>vs</div>",
                        unsafe_allow_html=True)
         with c2:
             _outright_side_input(2 * i + 1, f"Match {i+1} — Player 2", d2)
@@ -2022,13 +2068,13 @@ with tab_outright:
         sub_out_win, sub_out_final = st.tabs(["🏆  OUTRIGHT WIN", "🥈  MAKE THE FINAL"])
         with sub_out_win:
             st.markdown(
-                f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-bottom:8px;'>"
+                f"<div style='font-size:10px;color:var(--text-faint);font-family:monospace;margin-bottom:8px;'>"
                 f"{out_result['n_sims']:,} simulated tournaments &nbsp;·&nbsp; edge target {edge:.1%}</div>",
                 unsafe_allow_html=True)
             st.markdown(_outright_table_html(out_result["champion_prob"], edge), unsafe_allow_html=True)
         with sub_out_final:
             st.markdown(
-                f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-bottom:8px;'>"
+                f"<div style='font-size:10px;color:var(--text-faint);font-family:monospace;margin-bottom:8px;'>"
                 f"{out_result['n_sims']:,} simulated tournaments &nbsp;·&nbsp; edge target {edge:.1%}</div>",
                 unsafe_allow_html=True)
             st.markdown(_outright_table_html(out_result["finalist_prob"], edge), unsafe_allow_html=True)
@@ -2081,7 +2127,7 @@ with tab_rankings:
         max_elob = rank_df["elob"].max()
 
         st.markdown(
-            f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-bottom:12px;'>"
+            f"<div style='font-size:10px;color:var(--text-faint);font-family:monospace;margin-bottom:12px;'>"
             f"Showing top {len(rank_df)} players &nbsp;·&nbsp; min {min_matches} matches played"
             f"</div>",
             unsafe_allow_html=True)
@@ -2100,28 +2146,28 @@ with tab_rankings:
         for i, row in rank_df.iterrows():
             rank_num = i + 1
             if rank_num == 1:
-                rank_color = "#ffd700"
+                rank_color = "var(--gold)"
             elif rank_num == 2:
-                rank_color = "#c0c0c0"
+                rank_color = "var(--silver)"
             elif rank_num == 3:
-                rank_color = "#cd7f32"
+                rank_color = "var(--bronze)"
             else:
-                rank_color = "#444455"
+                rank_color = "var(--text-faint)"
             row_style = ""
             if rank_num == 16:
-                row_style = "border-bottom: 2px solid #2a2a3a;"
+                row_style = "border-bottom: 2px solid var(--border);"
 
-            matches_style = "color:#ef5350;font-weight:700;" if row["matches"] < 50 else "color:#888888;"
+            matches_style = "color:var(--negative);font-weight:700;" if row["matches"] < 50 else "color:var(--text-muted);"
 
-            elob_bar = _rankings_val(row["elob"], "#4fc3f7")
-            cen_bar  = _cen_val(row["cen_wf"], "#b39ddb") if row["cen_wf_valid"] and row["cen_wf"] > 0 else (
-                "<span style='color:#444455;font-size:11px;'>—</span>"
+            elob_bar = _rankings_val(row["elob"], "var(--accent-a)")
+            cen_bar  = _cen_val(row["cen_wf"], "var(--accent-match)") if row["cen_wf_valid"] and row["cen_wf"] > 0 else (
+                "<span style='color:var(--text-faint);font-size:11px;'>—</span>"
             )
 
             rows_html += (
                 f"<tr style='{row_style}'>"
                 f"<td style='color:{rank_color};font-weight:700;font-size:13px;text-align:right;padding-right:12px;'>{rank_num}</td>"
-                f"<td style='color:#ffffff;font-weight:600;font-family:Rajdhani,sans-serif;font-size:15px;'>{row['player']}</td>"
+                f"<td style='color:var(--text);font-weight:600;font-family:Rajdhani,sans-serif;font-size:15px;'>{row['player']}</td>"
                 f"<td style='text-align:right;{matches_style}'>{row['matches']}</td>"
                 f"<td>{elob_bar}</td>"
                 f"<td>{cen_bar}</td>"
@@ -2138,7 +2184,7 @@ with tab_rankings:
 with tab_update:
     st.markdown("### ⚙️ Update Results")
     st.markdown(
-        "<div style='font-size:11px;color:#888888;font-family:monospace;margin-bottom:12px;'>"
+        "<div style='font-size:11px;color:var(--text-muted);font-family:monospace;margin-bottom:12px;'>"
         "Scrape new snooker results, commit them to GitHub, then re-run the models. "
         "Each save commits to the repo, which automatically reboots the app with fresh data."
         "</div>", unsafe_allow_html=True)
@@ -2159,7 +2205,7 @@ with tab_update:
 
     if issues:
         st.markdown(
-            "<div style='font-size:10px;letter-spacing:1px;color:#ef9a9a;font-family:monospace;margin-bottom:6px;'>"
+            "<div style='font-size:10px;letter-spacing:1px;color:var(--accent-b);font-family:monospace;margin-bottom:6px;'>"
             "SETUP NEEDED</div>", unsafe_allow_html=True)
         for it in issues:
             st.markdown(f"- {it}")
@@ -2186,7 +2232,7 @@ with tab_update:
                     st.error("Incorrect password.")
     else:
         st.markdown(
-            "<div style='font-size:10px;color:#cd7f32;font-family:monospace;margin-bottom:8px;'>"
+            "<div style='font-size:10px;color:var(--bronze);font-family:monospace;margin-bottom:8px;'>"
             "⚠ No update password set. Add `[app] update_password` in Secrets to protect these buttons "
             "if your app is public.</div>", unsafe_allow_html=True)
 
@@ -2236,13 +2282,13 @@ with tab_update:
         if st.session_state.get("upd_preview") is not None:
             n = st.session_state.get("upd_new_count", 0)
             st.markdown(
-                f"<div style='font-size:12px;color:#a5d6a7;font-family:monospace;margin:8px 0;'>"
+                f"<div style='font-size:12px;color:var(--positive);font-family:monospace;margin:8px 0;'>"
                 f"{n} new match(es) found vs the saved dataset:</div>", unsafe_allow_html=True)
             if n > 0:
                 st.dataframe(st.session_state["upd_preview"], use_container_width=True, hide_index=True)
             else:
                 st.markdown(
-                    "<div style='font-size:11px;color:#888888;font-family:monospace;'>"
+                    "<div style='font-size:11px;color:var(--text-muted);font-family:monospace;'>"
                     "Nothing new — the dataset is already up to date.</div>", unsafe_allow_html=True)
 
         st.markdown("<hr class='divider'>", unsafe_allow_html=True)
@@ -2268,7 +2314,7 @@ with tab_update:
                     status.update(label="Commit failed", state="error")
                     st.exception(e)
         if save_data_disabled and not st.session_state.get("upd_scraped"):
-            st.markdown("<div style='font-size:10px;color:#444455;font-family:monospace;'>"
+            st.markdown("<div style='font-size:10px;color:var(--text-faint);font-family:monospace;'>"
                         "Run a scrape first.</div>", unsafe_allow_html=True)
 
         st.markdown("<hr class='divider'>", unsafe_allow_html=True)
@@ -2276,7 +2322,7 @@ with tab_update:
         # ===== STEP 3 — Run models & save ====================================
         st.markdown("<div class='upd-step'>③ RUN MODELS &amp; SAVE → GITHUB</div>", unsafe_allow_html=True)
         st.markdown(
-            "<div style='font-size:10px;color:#888888;font-family:monospace;margin-bottom:6px;'>"
+            "<div style='font-size:10px;color:var(--text-muted);font-family:monospace;margin-bottom:6px;'>"
             "Runs ELO-beta, ELO-frames and the centuries model on the current dataset, then commits "
             "ratings.json, player_rates.json and player_matches_df.csv. This is the heavy step "
             "(~minutes, loads the full frame dataset).</div>", unsafe_allow_html=True)
