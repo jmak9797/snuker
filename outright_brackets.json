@@ -151,5 +151,48 @@
         "player_b": "Artemijs Zizins"
       }
     ]
+  },
+  "English open QF": {
+    "x_players": 8,
+    "first_to_by_round": [
+      6,
+      6,
+      9
+    ],
+    "qualifier_first_to": null,
+    "slots": [
+      {
+        "mode": "confirmed",
+        "player": "Kyren Wilson"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Ding Junhui"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Zhou Yuelong"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Ali Carter"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Judd Trump"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Shaun Murphy"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Mark Williams"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Liam Davies"
+      }
+    ]
   }
 }
