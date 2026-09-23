@@ -3,7 +3,7 @@ import json
 import math
 import gc
 import base64
-from datetime import datetime
+from datetime import date, datetime
 
 import numpy as np
 import pandas as pd
@@ -1113,9 +1113,27 @@ def load_match_df():
     df["match_date"] = pd.to_datetime(df["match_date"]).dt.date
     return df
 
+@st.cache_data
+def load_last_played():
+    """{player: date of their most recent match}. Kept no-arg so st.cache_data never
+    re-hashes the 88k-row results frame; both sides of a match appear as player_name,
+    so every player with results is covered."""
+    return load_match_df().groupby("player_name")["match_date"].max().to_dict()
+
+
+def _rank_map(ratings: dict) -> dict:
+    """{player: position} over the whole rated roster, 1 = highest rated. Built before
+    any filtering so a player's rank never shifts when the Rankings filters move, and
+    rankB / rankF stay directly comparable. Ties broken by name for determinism."""
+    ordered = sorted(ratings.items(), key=lambda kv: (-kv[1].get("rating", 0.0), kv[0]))
+    return {player: i + 1 for i, (player, _) in enumerate(ordered)}
+
+
 ratings_elob, ratings_elof = load_ratings()
 player_rates = load_player_rates()
 sorted_players = sorted(ratings_elob.keys(), key=lambda p: ratings_elob[p]["rating"], reverse=True)
+rank_b_map = _rank_map(ratings_elob)
+rank_f_map = _rank_map(ratings_elof)
 
 try:
     match_df = load_match_df()
@@ -1123,6 +1141,8 @@ try:
 except FileNotFoundError:
     match_df = pd.DataFrame()
     _results_available = False
+
+last_played = load_last_played() if _results_available else {}
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -2038,18 +2058,68 @@ with tab_outright:
 # TAB 6 — Rankings
 # ────────────────────────────────────────────────────────────────────
 
+_RANK_DASH = "<span style='color:#444455;font-size:11px;'>—</span>"
+
 def _rankings_val(value: float, color: str) -> str:
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return _RANK_DASH
     return f"<span style='color:{color};font-weight:700;font-size:14px;'>{value:.1f}</span>"
+
+def _rankings_pos(value, color: str) -> str:
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return _RANK_DASH
+    return f"<span style='color:{color};font-weight:700;font-size:13px;'>{int(value)}</span>"
 
 def _cen_val(value: float, color: str) -> str:
     return f"<span style='color:{color};font-weight:700;font-size:14px;'>{value*100:.1f}%</span>"
 
+# Sort label -> (rank_df column, sensible default direction). Ratings, match counts
+# and century rates read best-first when descending; ranks and names when ascending.
+_RANK_SORTS = {
+    "ELO BETA":   ("elob",    True),
+    "ELO FRAMES": ("elof",    True),
+    "RANK B":     ("rank_b",  False),
+    "RANK F":     ("rank_f",  False),
+    "MATCHES":    ("matches", True),
+    "PLAYER":     ("player",  False),
+    "CEN RAT":    ("cen_wf",  True),
+}
+
+def _on_rank_sort_change():
+    """Flip the direction toggle to whatever reads naturally for the newly picked column."""
+    st.session_state["rank_sort_desc"] = _RANK_SORTS[st.session_state["rank_sort"]][1]
+
 with tab_rankings:
-    rc1, rc2 = st.columns(2)
-    with rc1:
+    fc1, fc2, fc3 = st.columns(3)
+    with fc1:
         top_n = st.slider("Top N players", min_value=5, max_value=300, value=32, step=1, key="rank_n")
-    with rc2:
+    with fc2:
         min_matches = st.slider("Min matches played", min_value=0, max_value=500, value=100, step=10, key="rank_min")
+    with fc3:
+        max_months = st.number_input(
+            "Months since last game", min_value=0, max_value=600, value=18, step=1,
+            key="rank_months", disabled=not _results_available,
+            help="Hide any player whose most recent match is older than this many "
+                 "months, measured from today. 0 = no recency filter.")
+
+    sc1, sc2 = st.columns([3, 1])
+    with sc1:
+        sort_label = st.selectbox("Sort by", list(_RANK_SORTS.keys()), index=0,
+                                  key="rank_sort", on_change=_on_rank_sort_change)
+    with sc2:
+        st.markdown("<div style='height:28px;'></div>", unsafe_allow_html=True)
+        st.session_state.setdefault("rank_sort_desc", True)
+        sort_desc = st.toggle("Descending", key="rank_sort_desc")
+
+    recency_on = _results_available and max_months > 0
+    cutoff = None
+    if recency_on:
+        cutoff = (pd.Timestamp(date.today()) - pd.DateOffset(months=int(max_months))).date()
+    elif max_months > 0:
+        st.markdown(
+            "<div style='font-size:10px;color:#ef5350;font-family:monospace;'>"
+            "Recency filter inactive — player_matches_df.csv not found.</div>",
+            unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -2058,31 +2128,50 @@ with tab_rankings:
         mp = info.get("matches_played", 0)
         if mp < min_matches:
             continue
-        rating = info.get("rating", 0)
+        if recency_on:
+            last = last_played.get(player)
+            if last is None or last < cutoff:
+                continue
         cen_wf = player_rates.get(player, None)
         if cen_wf is not None and (math.isnan(cen_wf) if isinstance(cen_wf, float) else False):
             cen_wf = None
         rank_rows.append({
             "player": player,
             "matches": mp,
-            "elob": rating,
-            "cen_wf": cen_wf if cen_wf is not None else 0.0,
+            "elob": info.get("rating", 0),
+            "elof": ratings_elof.get(player, {}).get("rating", float("nan")),
+            "rank_b": rank_b_map.get(player, float("nan")),
+            "rank_f": rank_f_map.get(player, float("nan")),
+            "cen_wf": cen_wf if cen_wf is not None else float("nan"),
             "cen_wf_valid": cen_wf is not None,
         })
 
-    rank_df = pd.DataFrame(rank_rows).sort_values("elob", ascending=False).reset_index(drop=True)
-    rank_df = rank_df.head(top_n)
+    rank_df = pd.DataFrame(rank_rows)
 
     if rank_df.empty:
         st.markdown(
-            "<div class='match-info'>No players meet the minimum matches filter.</div>",
+            "<div class='match-info'>No players meet the current filters.</div>",
             unsafe_allow_html=True)
     else:
-        max_elob = rank_df["elob"].max()
+        sort_key = _RANK_SORTS[sort_label][0]
+        if sort_key == "player":
+            rank_df = rank_df.sort_values("player", ascending=not sort_desc,
+                                          key=lambda s: s.str.lower())
+        else:
+            # ELO-beta as a secondary key so equal values keep a stable order.
+            rank_df = rank_df.sort_values([sort_key, "elob"],
+                                          ascending=[not sort_desc, False],
+                                          na_position="last")
+        rank_df = rank_df.head(top_n).reset_index(drop=True)
+
+        filt_bits = [f"min {min_matches} matches played"]
+        if recency_on:
+            filt_bits.append(f"played since {cutoff:%d %b %Y}")
+        filt_bits.append(f"sorted by {sort_label} {'▼' if sort_desc else '▲'}")
 
         st.markdown(
             f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-bottom:12px;'>"
-            f"Showing top {len(rank_df)} players &nbsp;·&nbsp; min {min_matches} matches played"
+            f"Showing {len(rank_df)} players &nbsp;·&nbsp; {' &nbsp;·&nbsp; '.join(filt_bits)}"
             f"</div>",
             unsafe_allow_html=True)
 
@@ -2090,9 +2179,12 @@ with tab_rankings:
             "<table class='rank-table'><thead><tr>"
             "<th style='width:36px;'>#</th>"
             "<th>PLAYER</th>"
-            "<th class='num' style='width:90px;'>MATCHES</th>"
-            "<th style='width:260px;'>ELO BETA</th>"
-            "<th style='width:200px;'>CEN RAT</th>"
+            "<th class='num' style='width:80px;'>MATCHES</th>"
+            "<th style='width:110px;'>ELO BETA</th>"
+            "<th style='width:110px;'>ELO FRAMES</th>"
+            "<th class='num' style='width:70px;'>RANK B</th>"
+            "<th class='num' style='width:70px;'>RANK F</th>"
+            "<th style='width:110px;'>CEN RAT</th>"
             "</tr></thead><tbody>"
         )
 
@@ -2107,23 +2199,22 @@ with tab_rankings:
                 rank_color = "#cd7f32"
             else:
                 rank_color = "#444455"
-            row_style = ""
-            if rank_num == 16:
-                row_style = "border-bottom: 2px solid #2a2a3a;"
 
             matches_style = "color:#ef5350;font-weight:700;" if row["matches"] < 50 else "color:#888888;"
 
             elob_bar = _rankings_val(row["elob"], "#4fc3f7")
-            cen_bar  = _cen_val(row["cen_wf"], "#b39ddb") if row["cen_wf_valid"] and row["cen_wf"] > 0 else (
-                "<span style='color:#444455;font-size:11px;'>—</span>"
-            )
+            elof_bar = _rankings_val(row["elof"], "#81c784")
+            cen_bar  = _cen_val(row["cen_wf"], "#b39ddb") if row["cen_wf_valid"] and row["cen_wf"] > 0 else _RANK_DASH
 
             rows_html += (
-                f"<tr style='{row_style}'>"
+                f"<tr>"
                 f"<td style='color:{rank_color};font-weight:700;font-size:13px;text-align:right;padding-right:12px;'>{rank_num}</td>"
                 f"<td style='color:#ffffff;font-weight:600;font-family:Rajdhani,sans-serif;font-size:15px;'>{row['player']}</td>"
                 f"<td style='text-align:right;{matches_style}'>{row['matches']}</td>"
                 f"<td>{elob_bar}</td>"
+                f"<td>{elof_bar}</td>"
+                f"<td style='text-align:right;'>{_rankings_pos(row['rank_b'], '#4fc3f7')}</td>"
+                f"<td style='text-align:right;'>{_rankings_pos(row['rank_f'], '#81c784')}</td>"
                 f"<td>{cen_bar}</td>"
                 f"</tr>"
             )
