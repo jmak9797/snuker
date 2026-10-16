@@ -194,5 +194,275 @@
         "player": "Liam Davies"
       }
     ]
+  },
+  "NIOpen1": {
+    "x_players": 64,
+    "first_to_by_round": [
+      4,
+      4,
+      4,
+      5,
+      6,
+      9
+    ],
+    "qualifier_first_to": null,
+    "slots": [
+      {
+        "mode": "confirmed",
+        "player": "Jack Lisowski"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Huang Jiahao"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Stephen Maguire"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Anthony McGill"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Si Jiahui"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Wang Xinbo"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Gary Wilson"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Mateusz Baranowski"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Thepchaiya Un-Nooh"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Aaron Hill"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Kyren Wilson"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Ben Mertens"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Pang Junxu"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Alfie Burden"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Shaun Murphy"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Liam Davies"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Mark Selby"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Louis Heathcote"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Hossein Vafaei"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Matthew Selt"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Xiao Guodong"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Sam Craigie"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Ali Carter"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Xu Si"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Elliot Slessor"
+      },
+      {
+        "mode": "confirmed",
+        "player": "He Guoqiang"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Chris Wakelin"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Jamie Jones"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Joe O'Connor"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Matthew Stevens"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Neil Robertson"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Ricky Walden"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Zhao Xintong"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Gao Yang"
+      },
+      {
+        "mode": "confirmed",
+        "player": "David Gilbert"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Oliver Sykes"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Ronnie O'Sullivan"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Cheung Ka Wai"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Stuart Bingham"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Yao Pengcheng"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Zhang Anda"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Liam Pullen"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Mark Williams"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Robbie Williams"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Peifan Lei"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Luca Brecel"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Judd Trump"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Martin O'Donnell"
+      },
+      {
+        "mode": "confirmed",
+        "player": "John Higgins"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Liam Highfield"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Jak Jones"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Tom Ford"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Barry Hawkins"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Daniel Wells"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Chang Bingyu"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Ryan Day"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Zhou Yuelong"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Michael Holt"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Mark Allen"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Jordan Brown"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Noppon Saengkham"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Thanawat Thirapongpaiboon"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Wu Yize"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Scott Donaldson"
+      }
+    ]
   }
 }
