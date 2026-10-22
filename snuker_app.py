@@ -155,6 +155,8 @@ def add_bet(player1, player2, market, selection, line, target, market_price):
 
 
 def market_input_row(key_prefix, target_val, pa, pb, market, selection, line):
+    if not show_market_inputs:
+        return None, False
     versioned_key = f"mp_{key_prefix}_v{st.session_state['mp_version']}"
     c1, c2 = st.columns([4, 1])
     with c1:
@@ -925,6 +927,54 @@ def run_elo_frames(df, k=16, initial_rating=0):
 # DATA PIPELINE — Century rates  (mirrors century_functions.ipynb)
 # ════════════════════════════════════════════════════════════════════
 
+def _cen_wf(df):
+    """Per-frame century credit given a frame win (NaN for frames not won),
+    with partial credit for near-centuries."""
+    return np.select(
+        [
+            (df.player_frame_score <= df.opposition_frame_score),
+            (df.player_frame_score > df.opposition_frame_score) & (df.player_50_break >= 100),
+            (df.player_frame_score > df.opposition_frame_score) & (df.player_50_break.between(95, 100, inclusive="left")),
+            (df.player_frame_score > df.opposition_frame_score) & (df.player_50_break.between(90, 95, inclusive="left")),
+            (df.player_frame_score > df.opposition_frame_score) & (df.player_50_break.between(85, 90, inclusive="left")),
+        ],
+        [np.nan, 1, 0.20, 0.125, 0.05],
+        default=0,
+    )
+
+
+def century_rate_history(df, halflife=220):
+    """
+    Pre-match downweighted century rate for every (match_id, player_name):
+    the same rate as add_dw_century_rate, but computed as of each match date
+    using only frames from the player's earlier matches. NaN before a player
+    has won any frame.
+    """
+    df = df[["match_id", "match_date", "player_name",
+             "player_frame_score", "opposition_frame_score", "player_50_break"]].copy()
+    df["match_date"] = pd.to_datetime(df["match_date"])
+    df["cen_wf"] = _cen_wf(df)
+    per_match = (
+        df.groupby(["player_name", "match_id"], sort=False)
+        .agg(match_date=("match_date", "first"),
+             _x=("cen_wf", "sum"), _n=("cen_wf", "count"))
+        .reset_index()
+        .sort_values(["player_name", "match_date", "match_id"], kind="stable")
+    )
+    # sum_{i<m} x_i * exp(-decay*(t_m - t_i)) = exp(-decay*t_m) * sum_{i<m} x_i * exp(decay*t_i);
+    # the exp(-decay*t_m) factor cancels in the ratio.
+    decay = np.log(2) / halflife
+    t = (per_match["match_date"] - per_match["match_date"].min()).dt.days.to_numpy()
+    g = np.exp(decay * t)
+    per_match["_gx"] = per_match["_x"] * g
+    per_match["_gn"] = per_match["_n"] * g
+    grp = per_match.groupby("player_name", sort=False)
+    num = grp["_gx"].cumsum() - per_match["_gx"]
+    den = grp["_gn"].cumsum() - per_match["_gn"]
+    per_match["player_cen_rate"] = (num / den.where(den > 0)).round(4)
+    return per_match[["match_id", "player_name", "player_cen_rate"]]
+
+
 def add_dw_century_rate(df, halflife=220):
     """
     Downweighted (time-decayed) average century-making probability per player,
@@ -936,17 +986,7 @@ def add_dw_century_rate(df, halflife=220):
     """
     df = df.copy()
     df["match_date"] = pd.to_datetime(df["match_date"])
-    df["cen_wf"] = np.select(
-        [
-            (df.player_frame_score <= df.opposition_frame_score),
-            (df.player_frame_score > df.opposition_frame_score) & (df.player_50_break >= 100),
-            (df.player_frame_score > df.opposition_frame_score) & (df.player_50_break.between(95, 100, inclusive="left")),
-            (df.player_frame_score > df.opposition_frame_score) & (df.player_50_break.between(90, 95, inclusive="left")),
-            (df.player_frame_score > df.opposition_frame_score) & (df.player_50_break.between(85, 90, inclusive="left")),
-        ],
-        [np.nan, 1, 0.20, 0.125, 0.05],
-        default=0,
-    )
+    df["cen_wf"] = _cen_wf(df)
     decay = np.log(2) / halflife
 
     # Only frames the player won contribute (cen_wf not NaN)
@@ -1000,6 +1040,11 @@ def run_models_pipeline(df_frames, elob_k=14, elof_k=16, halflife=220, progress_
 
     log("Running ELO-frames model…")
     _df_elof, final_ratings_elof = run_elo_frames(df.copy(), k=elof_k)
+    elof_hist = (
+        _df_elof[["match_id", "player_name", "player_rating"]]
+        .drop_duplicates(["match_id", "player_name"])
+        .rename(columns={"player_rating": "player_elof_rating"})
+    )
     del _df_elof
     gc.collect()
 
@@ -1021,6 +1066,15 @@ def run_models_pipeline(df_frames, elob_k=14, elof_k=16, halflife=220, progress_
         .reset_index(drop=True)
     )
     del df_elob
+    gc.collect()
+
+    log("Adding ELO-frames and century-rate history…")
+    matches_df = (
+        matches_df
+        .merge(elof_hist, on=["match_id", "player_name"], how="left")
+        .merge(century_rate_history(df, halflife=halflife), on=["match_id", "player_name"], how="left")
+    )
+    del elof_hist
     gc.collect()
 
     log("Running centuries model…")
@@ -1150,6 +1204,8 @@ last_played = load_last_played() if _results_available else {}
 # ════════════════════════════════════════════════════════════════════
 
 st.markdown("## 🎱 Match Predictor")
+show_market_inputs = st.checkbox("Market inputs", value=False, key="show_market_inputs",
+                                 help="Show market price boxes and add-to-bet-slip buttons on the pricing tabs")
 st.markdown("---")
 
 col_a, col_vs, col_b = st.columns([10, 1, 10])
@@ -1324,23 +1380,25 @@ with tab_handicap:
 
         with col_ha:
             st.markdown(_hcap_card_html(pa, "player-name-a", "card-a", "#4fc3f7", lines_a), unsafe_allow_html=True)
-            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-            for label, prob, true_o, tgt_o, _ in lines_a:
-                safe = label.replace(".", "_").replace("+", "p").replace("-", "m")
-                st.markdown(f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-top:6px;'>{pa} {label}</div>", unsafe_allow_html=True)
-                mp_val, is_val = market_input_row(f"ha_{safe}", tgt_o, pa, pb, "Handicap", f"{pa} {label}", label)
-                if mp_val is not None:
-                    st.markdown(value_badge(mp_val, tgt_o, is_val), unsafe_allow_html=True)
+            if show_market_inputs:
+                st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                for label, prob, true_o, tgt_o, _ in lines_a:
+                    safe = label.replace(".", "_").replace("+", "p").replace("-", "m")
+                    st.markdown(f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-top:6px;'>{pa} {label}</div>", unsafe_allow_html=True)
+                    mp_val, is_val = market_input_row(f"ha_{safe}", tgt_o, pa, pb, "Handicap", f"{pa} {label}", label)
+                    if mp_val is not None:
+                        st.markdown(value_badge(mp_val, tgt_o, is_val), unsafe_allow_html=True)
 
         with col_hb:
             st.markdown(_hcap_card_html(pb, "player-name-b", "card-b", "#ef9a9a", lines_b), unsafe_allow_html=True)
-            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-            for label, prob, true_o, tgt_o, _ in lines_b:
-                safe = label.replace(".", "_").replace("+", "p").replace("-", "m")
-                st.markdown(f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-top:6px;'>{pb} {label}</div>", unsafe_allow_html=True)
-                mp_val, is_val = market_input_row(f"hb_{safe}", tgt_o, pa, pb, "Handicap", f"{pb} {label}", label)
-                if mp_val is not None:
-                    st.markdown(value_badge(mp_val, tgt_o, is_val), unsafe_allow_html=True)
+            if show_market_inputs:
+                st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                for label, prob, true_o, tgt_o, _ in lines_b:
+                    safe = label.replace(".", "_").replace("+", "p").replace("-", "m")
+                    st.markdown(f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-top:6px;'>{pb} {label}</div>", unsafe_allow_html=True)
+                    mp_val, is_val = market_input_row(f"hb_{safe}", tgt_o, pa, pb, "Handicap", f"{pb} {label}", label)
+                    if mp_val is not None:
+                        st.markdown(value_badge(mp_val, tgt_o, is_val), unsafe_allow_html=True)
 
         st.markdown(
             "<div style='margin-top:16px;font-family:monospace;font-size:10px;color:#444455;text-align:center;'>"
@@ -1413,6 +1471,8 @@ def _cen_col(col, name, name_class, card_class, color, ou, line, dist, cen_edge,
             + "</div>",
             unsafe_allow_html=True
         )
+        if not show_market_inputs:
+            return
         ot = (1/ou["over"]) * (1+cen_edge) if ou["over"] > 0 else float("inf")
         ut = (1/ou["under"]) * (1+cen_edge) if ou["under"] > 0 else float("inf")
         st.markdown(f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-top:8px;'>OVER {line}</div>", unsafe_allow_html=True)
@@ -1436,7 +1496,7 @@ with tab_centuries:
 
         line_options = [x / 2 for x in range(1, ft * 2 + 1, 2)]
         st.markdown("<br>", unsafe_allow_html=True)
-        lc1, lc2, lc3 = st.columns(3)
+        lc3, lc1, lc2 = st.columns(3)
         with lc1:
             line_a = line_options[0] if len(line_options) == 1 else st.select_slider(
                 f"{pa} LINE", options=line_options, value=line_options[min(1, len(line_options)-1)], key="line_a")
@@ -1454,13 +1514,13 @@ with tab_centuries:
         ou_b = over_under(cen_result, pb, line_b)
         ou_m = over_under(cen_result, "match", line_m)
 
-        col_ca, col_cb, col_cm = st.columns(3)
+        col_cm, col_ca, col_cb = st.columns(3)
         cen_rate_a = player_rates.get(pa, 0.0) or 0.0
         cen_rate_b = player_rates.get(pb, 0.0) or 0.0
 
+        _cen_col(col_cm, "MATCH TOTAL", "player-name-match", "card-match", "#b39ddb", ou_m, line_m, cen_result["match"], cen_edge, 0.0, pa, pb, "cm")
         _cen_col(col_ca, pa, "player-name-a", "card-a", "#4fc3f7", ou_a, line_a, cen_result[pa], cen_edge, cen_rate_a, pa, pb, "ca")
         _cen_col(col_cb, pb, "player-name-b", "card-b", "#ef9a9a", ou_b, line_b, cen_result[pb], cen_edge, cen_rate_b, pa, pb, "cb")
-        _cen_col(col_cm, "MATCH TOTAL", "player-name-match", "card-match", "#b39ddb", ou_m, line_m, cen_result["match"], cen_edge, 0.0, pa, pb, "cm")
 
 
 # ────────────────────────────────────────────────────────────────────
@@ -1537,7 +1597,7 @@ with tab_betslip:
 
 def _results_table_html(df_in: pd.DataFrame, color: str) -> str:
     headers = ["DATE", "TOURNAMENT", "ROUND", "OPPONENT",
-               "PTS", "OPP PTS", "RATING", "OPP RTG",
+               "PTS", "OPP PTS", "C", "OPP C", "RATING", "OPP RTG",
                "WIN PROB", "DELTA", "P MATCHES", "O MATCHES"]
     head_html = "".join(f"<th>{h}</th>" for h in headers)
     rows_html = ""
@@ -1550,6 +1610,9 @@ def _results_table_html(df_in: pd.DataFrame, color: str) -> str:
         pm_style = "color:#ef5350;font-weight:700;" if pm < 50 else "color:#cccccc;"
         om = int(row.get("oppo_matches_played", 0))
         om_style = "color:#ef5350;font-weight:700;" if om < 50 else "color:#cccccc;"
+        pc, oc = row.get("player_centuries"), row.get("oppo_centuries")
+        pc = "" if pd.isna(pc) else int(pc)
+        oc = "" if pd.isna(oc) else int(oc)
         rows_html += (
             f"<tr style='{bg}'>"
             f"<td>{row.get('match_date','')}</td>"
@@ -1558,6 +1621,8 @@ def _results_table_html(df_in: pd.DataFrame, color: str) -> str:
             f"<td style='color:{color};font-weight:700;'>{row.get('opposition_name','')}</td>"
             f"<td style='color:#ffffff;font-weight:700;'>{row.get('player_score','')}</td>"
             f"<td>{row.get('opposition_score','')}</td>"
+            f"<td style='color:#ffffff;font-weight:700;'>{pc}</td>"
+            f"<td>{oc}</td>"
             f"<td style='color:#4fc3f7;'>{row.get('player_rating', 0):.1f}</td>"
             f"<td style='color:#888888;'>{row.get('oppo_rating', 0):.1f}</td>"
             f"<td>{row.get('player_prob', 0):.1%}</td>"
@@ -1601,25 +1666,45 @@ def _h2h_table_html(df_in: pd.DataFrame, pa: str, color_a: str, color_b: str) ->
         f"<tbody>{rows_html}</tbody></table>"
     )
 
-def _rating_chart(df_player: pd.DataFrame, name: str, color: str):
+# label -> (results column, hover text, y-axis tick format)
+RATING_CHART_METRICS = {
+    "Elo Beta":     ("player_rating",      "Rating: %{y:.1f}",       None),
+    "Elo Frames":   ("player_elof_rating", "Rating: %{y:.1f}",       None),
+    "Century rate": ("player_cen_rate",    "Century rate: %{y:.1%}", ".0%"),
+}
+
+def _rating_chart(df_player: pd.DataFrame, name: str, color: str, metric: str = "Elo Beta"):
+    col, hover, tickfmt = RATING_CHART_METRICS[metric]
     df_sorted = df_player.sort_values("match_date").drop_duplicates(subset="match_date", keep="last")
+    df_sorted = df_sorted.dropna(subset=[col]) if col in df_sorted else df_sorted.iloc[0:0]
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=df_sorted["match_date"], y=df_sorted["player_rating"],
+        x=df_sorted["match_date"], y=df_sorted[col] if col in df_sorted else [],
         mode="lines+markers", name=name,
         line=dict(color=color, width=2), marker=dict(color=color, size=4),
-        hovertemplate="%{x}<br>Rating: %{y:.1f}<extra></extra>",
+        hovertemplate=f"%{{x}}<br>{hover}<extra></extra>",
     ))
     fig.update_layout(
         paper_bgcolor="#13131f", plot_bgcolor="#1e1e2e",
         font=dict(family="IBM Plex Mono", color="#888888", size=11),
         margin=dict(l=40, r=20, t=30, b=40), height=220,
         xaxis=dict(gridcolor="#2a2a3a", showgrid=True, zeroline=False),
-        yaxis=dict(gridcolor="#2a2a3a", showgrid=True, zeroline=False),
+        yaxis=dict(gridcolor="#2a2a3a", showgrid=True, zeroline=False, tickformat=tickfmt),
         showlegend=False,
-        title=dict(text=f"{name} — Rating History", font=dict(color=color, size=13), x=0),
+        title=dict(text=f"{name} — {metric} History", font=dict(color=color, size=13), x=0),
     )
+    if df_sorted.empty:
+        fig.add_annotation(text="No history yet — re-run models in the Update tab",
+                           showarrow=False, font=dict(color="#555566", size=12),
+                           xref="paper", yref="paper", x=0.5, y=0.5)
     return fig
+
+
+def _rating_chart_block(df_player: pd.DataFrame, name: str, color: str, key: str):
+    metric = st.radio("Chart", list(RATING_CHART_METRICS), horizontal=True,
+                      key=key, label_visibility="collapsed")
+    st.plotly_chart(_rating_chart(df_player, name, color, metric),
+                    use_container_width=True, config={"displayModeBar": False})
 
 with tab_results:
     if not _results_available:
@@ -1636,7 +1721,7 @@ with tab_results:
             if df_a.empty:
                 st.markdown(f"<div class='match-info'>No results found for {pa}.</div>", unsafe_allow_html=True)
             else:
-                st.plotly_chart(_rating_chart(df_a, pa, "#4fc3f7"), use_container_width=True, config={"displayModeBar": False})
+                _rating_chart_block(df_a, pa, "#4fc3f7", "chart_metric_a")
                 df_a_recent = df_a.head(n_results)
                 st.markdown(f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-bottom:6px;'>LAST {len(df_a_recent)} RESULTS</div>", unsafe_allow_html=True)
                 st.markdown(_results_table_html(df_a_recent, "#ef9a9a"), unsafe_allow_html=True)
@@ -1646,7 +1731,7 @@ with tab_results:
             if df_b.empty:
                 st.markdown(f"<div class='match-info'>No results found for {pb}.</div>", unsafe_allow_html=True)
             else:
-                st.plotly_chart(_rating_chart(df_b, pb, "#ef9a9a"), use_container_width=True, config={"displayModeBar": False})
+                _rating_chart_block(df_b, pb, "#ef9a9a", "chart_metric_b")
                 df_b_recent = df_b.head(n_results)
                 st.markdown(f"<div style='font-size:10px;color:#444455;font-family:monospace;margin-bottom:6px;'>LAST {len(df_b_recent)} RESULTS</div>", unsafe_allow_html=True)
                 st.markdown(_results_table_html(df_b_recent, "#4fc3f7"), unsafe_allow_html=True)
