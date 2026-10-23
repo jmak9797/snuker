@@ -464,5 +464,48 @@
         "player": "Scott Donaldson"
       }
     ]
+  },
+  "NI QF": {
+    "x_players": 8,
+    "first_to_by_round": [
+      6,
+      6,
+      9
+    ],
+    "qualifier_first_to": null,
+    "slots": [
+      {
+        "mode": "confirmed",
+        "player": "Kyren Wilson"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Anthony McGill"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Elliot Slessor"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Sam Craigie"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Mark Williams"
+      },
+      {
+        "mode": "confirmed",
+        "player": "David Gilbert"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Jak Jones"
+      },
+      {
+        "mode": "confirmed",
+        "player": "Scott Donaldson"
+      }
+    ]
   }
 }
