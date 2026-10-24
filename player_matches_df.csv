@@ -86555,14 +86555,14 @@ match_id,round_name,best_of,match_date,tournament_name,player_name,player_score,
 405011,Last 64,7,2026-09-08,2026 English Open,Thanawat Thirapongpaiboon,3.0,Mark Williams,4.0,15.89,125.07,0.1963,0.8037,-0.4827,138,1058,0,0,52.18,0.1416
 405377,Last 16,7,2026-09-10,2026 English Open,Shaun Murphy,4.0,Pang Junxu,3.0,127.16,87.43,0.6229,0.3771,0.1606,1069,286,1,0,211.08,0.2
 405377,Last 16,7,2026-09-10,2026 English Open,Pang Junxu,3.0,Shaun Murphy,4.0,87.43,127.16,0.3771,0.6229,-0.5349,286,1069,0,1,124.39,0.1359
-409832,Last 64,9,2026-09-28,2026 Shenzhen Open,Scott Donaldson,5.0,Zhao Xintong,4.0,62.23,131.73,0.2693,0.7307,0.64,522,456,1,0,91.35,0.0736
-409832,Last 64,9,2026-09-28,2026 Shenzhen Open,Zhao Xintong,4.0,Scott Donaldson,5.0,131.73,62.23,0.7307,0.2693,-0.7235,456,522,0,1,219.26,0.251
+409832,Last 64,9,2026-09-28,2026 Shenzhen Open,Scott Donaldson,5.0,Zhao Xintong,4.0,61.59,132.46,0.2653,0.7347,0.6451,521,455,1,0,87.49,0.0736
+409832,Last 64,9,2026-09-28,2026 Shenzhen Open,Zhao Xintong,4.0,Scott Donaldson,5.0,132.46,61.59,0.7347,0.2653,-0.7294,455,521,0,1,223.12,0.251
 409838,Last 64,9,2026-09-29,2026 Shenzhen Open,Wu Yize,5.0,Jamie Clarke,4.0,121.75,33.71,0.7816,0.2184,0.3563,236,277,2,0,180.54,0.203
 409838,Last 64,9,2026-09-29,2026 Shenzhen Open,Jamie Clarke,4.0,Wu Yize,5.0,33.71,121.75,0.2184,0.7816,-0.3116,277,236,0,2,53.43,0.0692
-409841,Last 64,9,2026-09-29,2026 Shenzhen Open,Michael Holt,5.0,Xiao Guodong,4.0,51.65,98.76,0.3381,0.6619,0.4742,642,783,0,0,76.74,0.0869
-409841,Last 64,9,2026-09-29,2026 Shenzhen Open,Xiao Guodong,4.0,Michael Holt,5.0,98.76,51.65,0.6619,0.3381,-0.394,783,642,0,0,161.37,0.1959
-409851,Last 32,9,2026-09-30,2026 Shenzhen Open,Michael Holt,5.0,Thepchaiya Un-Nooh,0.0,53.67,76.52,0.4197,0.5803,1.0583,645,519,0,0,91.45,0.0794
-409851,Last 32,9,2026-09-30,2026 Shenzhen Open,Thepchaiya Un-Nooh,0.0,Michael Holt,5.0,76.52,53.67,0.5803,0.4197,-1.2926,519,645,0,0,126.98,0.1661
+409841,Last 64,9,2026-09-29,2026 Shenzhen Open,Michael Holt,5.0,Xiao Guodong,4.0,52.12,98.37,0.3409,0.6591,0.4714,643,784,0,0,79.54,0.0869
+409841,Last 64,9,2026-09-29,2026 Shenzhen Open,Xiao Guodong,4.0,Michael Holt,5.0,98.37,52.12,0.6591,0.3409,-0.3917,784,643,0,0,158.57,0.1959
+409851,Last 32,9,2026-09-30,2026 Shenzhen Open,Michael Holt,5.0,Thepchaiya Un-Nooh,0.0,52.6,77.83,0.4114,0.5886,1.0761,644,518,0,0,82.21,0.0794
+409851,Last 32,9,2026-09-30,2026 Shenzhen Open,Thepchaiya Un-Nooh,0.0,Michael Holt,5.0,77.83,52.6,0.5886,0.4114,-1.3148,518,644,0,0,136.22,0.1661
 392249,Last 64,7,2026-05-14,2026 Q School Asia-Oceania - Event 1,Zhou Jun,4.0,Yang Jingrui,3.0,-11.19,0.01,0.4648,0.5352,1.2548,2,0,0,0,-2.67,0.0
 392249,Last 64,7,2026-05-14,2026 Q School Asia-Oceania - Event 1,Yang Jingrui,3.0,Zhou Jun,4.0,0.01,-11.19,0.5352,0.4648,-1.305,0,2,0,0,0.0,
 392250,Last 64,7,2026-05-14,2026 Q School Asia-Oceania - Event 1,Zulfiqar Qadir,4.0,Lomnaw Issarangkun,1.0,-3.83,-5.39,0.5049,0.4951,2.1433,6,7,0,0,-1.93,0.0
@@ -89577,14 +89577,14 @@ match_id,round_name,best_of,match_date,tournament_name,player_name,player_score,
 410020,Quarter-final,9,2026-10-02,2026 Shenzhen Open,Michael Holt,2.0,Yuan Sijun,5.0,55.83,85.61,0.3958,0.6042,-0.5437,647,335,0,2,105.54,0.0779
 410279,Semi-final,11,2026-10-03,2026 Shenzhen Open,Wu Yize,6.0,Judd Trump,1.0,124.68,171.59,0.3237,0.6763,2.9888,240,1406,1,0,181.47,0.2154
 410279,Semi-final,11,2026-10-03,2026 Shenzhen Open,Judd Trump,1.0,Wu Yize,6.0,171.59,124.68,0.6763,0.3237,-0.5953,1406,240,0,1,282.24,0.1993
-410496,Last 64,9,2026-09-28,2026 Shenzhen Open,Scott Donaldson,5.0,Zhao Xintong,4.0,61.59,132.46,0.2653,0.7347,0.6451,521,455,1,0,87.49,0.0796
-410496,Last 64,9,2026-09-28,2026 Shenzhen Open,Zhao Xintong,4.0,Scott Donaldson,5.0,132.46,61.59,0.7347,0.2653,-0.7294,455,521,0,1,223.12,0.2472
+410496,Last 64,9,2026-09-28,2026 Shenzhen Open,Scott Donaldson,5.0,Zhao Xintong,4.0,62.23,131.73,0.2693,0.7307,0.64,522,456,1,0,91.35,0.0796
+410496,Last 64,9,2026-09-28,2026 Shenzhen Open,Zhao Xintong,4.0,Scott Donaldson,5.0,131.73,62.23,0.7307,0.2693,-0.7235,456,522,0,1,219.26,0.2472
 410497,Last 64,9,2026-09-29,2026 Shenzhen Open,Wu Yize,5.0,Jamie Clarke,4.0,121.39,34.03,0.7798,0.2202,0.3605,235,276,2,0,182.54,0.2072
 410497,Last 64,9,2026-09-29,2026 Shenzhen Open,Jamie Clarke,4.0,Wu Yize,5.0,34.03,121.39,0.2202,0.7798,-0.3152,276,235,0,2,51.43,0.0667
-410498,Last 64,9,2026-09-29,2026 Shenzhen Open,Michael Holt,5.0,Xiao Guodong,4.0,52.12,98.37,0.3409,0.6591,0.4714,643,784,0,0,79.54,0.083
-410498,Last 64,9,2026-09-29,2026 Shenzhen Open,Xiao Guodong,4.0,Michael Holt,5.0,98.37,52.12,0.6591,0.3409,-0.3917,784,643,0,0,158.57,0.1919
-410499,Last 32,9,2026-09-30,2026 Shenzhen Open,Michael Holt,5.0,Thepchaiya Un-Nooh,0.0,52.6,77.83,0.4114,0.5886,1.0761,644,518,0,0,82.21,0.0761
-410499,Last 32,9,2026-09-30,2026 Shenzhen Open,Thepchaiya Un-Nooh,0.0,Michael Holt,5.0,77.83,52.6,0.5886,0.4114,-1.3148,518,644,0,0,136.22,0.1661
+410498,Last 64,9,2026-09-29,2026 Shenzhen Open,Michael Holt,5.0,Xiao Guodong,4.0,51.65,98.76,0.3381,0.6619,0.4742,642,783,0,0,76.74,0.083
+410498,Last 64,9,2026-09-29,2026 Shenzhen Open,Xiao Guodong,4.0,Michael Holt,5.0,98.76,51.65,0.6619,0.3381,-0.394,783,642,0,0,161.37,0.1919
+410499,Last 32,9,2026-09-30,2026 Shenzhen Open,Michael Holt,5.0,Thepchaiya Un-Nooh,0.0,53.67,76.52,0.4197,0.5803,1.0583,645,519,0,0,91.45,0.0761
+410499,Last 32,9,2026-09-30,2026 Shenzhen Open,Thepchaiya Un-Nooh,0.0,Michael Holt,5.0,76.52,53.67,0.5803,0.4197,-1.2926,519,645,0,0,126.98,0.1661
 410500,Semi-final,11,2026-10-03,2026 Shenzhen Open,Yuan Sijun,6.0,Jimmy Robertson,5.0,86.59,68.41,0.5704,0.4296,0.5355,336,682,0,2,124.98,0.1535
 410500,Semi-final,11,2026-10-03,2026 Shenzhen Open,Jimmy Robertson,5.0,Yuan Sijun,6.0,68.41,86.59,0.4296,0.5704,-0.2824,682,336,2,0,113.1,0.1249
 410501,Final,19,2026-10-04,2026 Shenzhen Open,Wu Yize,10.0,Yuan Sijun,5.0,127.67,87.13,0.6967,0.3033,1.2838,241,337,1,0,189.44,0.2143
@@ -89697,3 +89697,7 @@ match_id,round_name,best_of,match_date,tournament_name,player_name,player_score,
 414065,Last 16,7,2026-10-22,2026 Northern Ireland Open,Ricky Walden,1.0,Elliot Slessor,4.0,87.09,72.94,0.5444,0.4556,-0.558,903,443,0,0,131.16,0.1247
 414066,Last 16,7,2026-10-22,2026 Northern Ireland Open,Anthony McGill,4.0,Mateusz Baranowski,1.0,83.54,3.24,0.736,0.264,0.335,688,75,0,1,137.74,0.0694
 414066,Last 16,7,2026-10-22,2026 Northern Ireland Open,Mateusz Baranowski,1.0,Anthony McGill,4.0,3.24,83.54,0.264,0.736,-1.9776,75,688,1,0,20.42,0.0888
+414094,Quarter-final,11,2026-10-23,2026 Northern Ireland Open,Sam Craigie,6.0,Elliot Slessor,2.0,71.71,74.02,0.491,0.509,1.407,358,444,0,0,121.92,0.1546
+414094,Quarter-final,11,2026-10-23,2026 Northern Ireland Open,Elliot Slessor,2.0,Sam Craigie,6.0,74.02,71.71,0.509,0.491,-1.1621,444,358,0,0,139.44,0.1101
+414095,Quarter-final,11,2026-10-23,2026 Northern Ireland Open,Kyren Wilson,6.0,Anthony McGill,1.0,135.24,83.87,0.6917,0.3083,0.3407,1059,689,1,0,183.39,0.1782
+414095,Quarter-final,11,2026-10-23,2026 Northern Ireland Open,Anthony McGill,1.0,Kyren Wilson,6.0,83.87,135.24,0.3083,0.6917,-0.5113,689,1059,0,1,139.93,0.0688
